@@ -1,8 +1,3 @@
+# Godot 4+ specific ignores
 .godot/
-*.translation
-*.tmp
-*.uid
-.DS_Store
-export.cfg
-android/
-ios/
+/android/
