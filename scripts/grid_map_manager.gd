@@ -30,6 +30,11 @@ func _ready() -> void:
 	_init_rooms()
 	_build_grid()
 	_init_astar()
+	if not MatchState.building_added.is_connected(_on_building_added):
+		MatchState.building_added.connect(_on_building_added)
+	queue_redraw()
+
+func _on_building_added(_room_id: String, _building_data: Dictionary) -> void:
 	queue_redraw()
 
 func _init_rooms() -> void:
@@ -264,7 +269,7 @@ func get_invader_path_to_starter(from_cell: Vector2i, room: RoomData) -> Array[V
 	return path
 
 func has_building_at(cell: Vector2i) -> bool:
-	return turrets.has(cell)
+	return turrets.has(cell) or MatchState.cell_to_building.has(cell)
 
 func add_turret(cell: Vector2i, turret: SilicicTurret) -> void:
 	turrets[cell] = turret
@@ -350,3 +355,40 @@ func _draw() -> void:
 	# Draw Entrance Marker
 	var entrance_pos := cell_to_world(invader_spawn_cell)
 	draw_string(font, entrance_pos + Vector2(-12, -20), "走廊入口", HORIZONTAL_ALIGNMENT_LEFT, 80, font_size, Color(1.0, 0.6, 0.6))
+
+	# Draw Placed Buildings (Mines, Chem Plants)
+	for b_cell in MatchState.cell_to_building.keys():
+		var b_info: Dictionary = MatchState.cell_to_building[b_cell]
+		var b_rect := Rect2(b_cell.x * TILE_SIZE + 2, b_cell.y * TILE_SIZE + 2, TILE_SIZE - 4, TILE_SIZE - 4)
+		var b_id: String = b_info.get("id", "")
+		var b_color: Color = Color(0.4, 0.4, 0.5)
+		var b_sym: String = "M"
+		match b_id:
+			"iron_mine":
+				b_color = Color(0.45, 0.5, 0.55)
+				b_sym = "Fe"
+			"tungsten_mine":
+				b_color = Color(0.35, 0.45, 0.6)
+				b_sym = "W"
+			"molybdenum_mine":
+				b_color = Color(0.3, 0.55, 0.65)
+				b_sym = "Mo"
+			"sulfur_mine":
+				b_color = Color(0.75, 0.75, 0.2)
+				b_sym = "S"
+			"antimony_mine":
+				b_color = Color(0.55, 0.65, 0.7)
+				b_sym = "Sb"
+			"gold_mine":
+				b_color = Color(0.9, 0.75, 0.1)
+				b_sym = "Au"
+			"uranium_mine":
+				b_color = Color(0.2, 0.95, 0.2)
+				b_sym = "U"
+			"chem_plant":
+				b_color = Color(0.7, 0.25, 0.85)
+				b_sym = "化"
+		draw_rect(b_rect, b_color)
+		draw_rect(b_rect, b_color.lightened(0.3), false, 1.5)
+		draw_string(font, Vector2(b_cell.x * TILE_SIZE + 4, b_cell.y * TILE_SIZE + TILE_SIZE - 8), b_sym, HORIZONTAL_ALIGNMENT_CENTER, TILE_SIZE - 8, 11, Color.WHITE)
+

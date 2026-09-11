@@ -12,7 +12,7 @@ func _ready() -> void:
 	success = success and _test_grid_walkability_and_navigation()
 	success = success and _test_allies_claim_flow()
 	success = success and _test_invader_corridor_movement()
-	success = success and _test_no_acid_tree_continuation_and_no_build_menu()
+	success = success and _test_phase_1_economy()
 	success = success and _test_eject_non_owner_when_room_claimed()
 	success = success and _test_income_generation()
 	success = success and _test_silicic_i_placement_rules()
@@ -21,7 +21,7 @@ func _ready() -> void:
 
 	if success:
 		print("========================================")
-		print("ALL chem-dorm V0 ACCEPTANCE TESTS PASSED!")
+		print("ALL chem-dorm ACCEPTANCE TESTS PASSED!")
 		print("========================================")
 		get_tree().quit(0)
 	else:
@@ -269,15 +269,106 @@ func _test_invader_corridor_movement() -> bool:
 	grid.queue_free()
 	return true
 
-func _test_no_acid_tree_continuation_and_no_build_menu() -> bool:
-	print("\n[TEST 6] Testing No Acid Tree Continuation & No Complex Build Menu...")
-	var files := DirAccess.get_files_at("res://scripts")
-	for f in files:
-		var lf := f.to_lower()
-		if lf.contains("build_menu") or lf.contains("carbonate") or lf.contains("plant") or lf.contains("silicic_2") or lf.contains("silicic_ii"):
-			printerr("FAILED: Found forbidden script file: ", f)
-			return false
-	print("PASS: Only Silicic I allowed, no higher acid tiers or build menus.")
+func _test_phase_1_economy() -> bool:
+	print("\n[TEST 6] Testing Phase 1 Economy (Dual Resource, Mines, Chem Plant, Uranium Limit)...")
+	MatchState.reset_match()
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	var r101: RoomData = grid.get_room_by_id("room_101")
+	MatchState.claim_room("room_101", "player")
+
+	# 1. 验证双资源初始值
+	if MatchState.money != 0 or MatchState.chem_feedstock != 0:
+		printerr("FAILED: Initial money or feedstock not 0")
+		grid.queue_free()
+		return false
+
+	# 2. 验证起步矿升级
+	if MatchState.get_starter_level("room_101") != 1:
+		printerr("FAILED: Initial starter level not 1")
+		grid.queue_free()
+		return false
+	
+	# 没钱升级起步矿失败
+	if MatchState.upgrade_starter("room_101", "player"):
+		printerr("FAILED: Upgrade starter should fail without enough money")
+		grid.queue_free()
+		return false
+	
+	# 给钱升级
+	MatchState.add_money(100)
+	if not MatchState.upgrade_starter("room_101", "player"):
+		printerr("FAILED: Upgrade starter should succeed with money")
+		grid.queue_free()
+		return false
+	if MatchState.get_starter_level("room_101") != 2:
+		printerr("FAILED: Starter level should be 2 after upgrade")
+		grid.queue_free()
+		return false
+
+	# 3. 验证矿山建造与产出
+	var cell_iron := Vector2i(5, 5)
+	MatchState.add_money(1000)
+	if not MatchState.buy_and_place_building("room_101", "iron_mine", "player", cell_iron):
+		printerr("FAILED: Failed to build iron_mine")
+		grid.queue_free()
+		return false
+	
+	# 4. 验证铀矿一房一座限制与第二座购买失败
+	var cell_uranium1 := Vector2i(5, 6)
+	var cell_uranium2 := Vector2i(5, 7)
+	MatchState.add_money(12000)
+	if not MatchState.buy_and_place_building("room_101", "uranium_mine", "player", cell_uranium1):
+		printerr("FAILED: First uranium mine purchase should succeed")
+		grid.queue_free()
+		return false
+
+	# 第二座购买必须失败
+	if MatchState.buy_and_place_building("room_101", "uranium_mine", "player", cell_uranium2):
+		printerr("FAILED: Second uranium mine in same room must fail!")
+		grid.queue_free()
+		return false
+
+	# 5. 验证化工厂建造与化学原料产出
+	if MatchState.has_chem_plant("room_101"):
+		printerr("FAILED: Room 101 should not have chem plant before building")
+		grid.queue_free()
+		return false
+
+	var cell_plant := Vector2i(6, 6)
+	if not MatchState.buy_and_place_building("room_101", "chem_plant", "player", cell_plant):
+		printerr("FAILED: Failed to build chem_plant")
+		grid.queue_free()
+		return false
+
+	if not MatchState.has_chem_plant("room_101"):
+		printerr("FAILED: has_chem_plant should be true after building chem plant")
+		grid.queue_free()
+		return false
+
+	# 6. 模拟一个产出周期，检查金钱与原料同时入账
+	var prev_money: int = MatchState.money
+	var prev_feedstock: int = MatchState.chem_feedstock
+	MatchState._process(MatchState.STARTER_INCOME_INTERVAL)
+
+	# 起步矿 lvl 2 (20) + 铁矿 (5) + 铀矿 (800) = 825 money
+	var expected_money_gain: int = (MatchState.STARTER_INCOME_AMOUNT * 2) + 5 + 800
+	var expected_feedstock_gain: int = 5 # 化工厂产出 5 原料
+
+	if MatchState.money != prev_money + expected_money_gain:
+		printerr("FAILED: Money gain mismatch. Expected: ", prev_money + expected_money_gain, " got: ", MatchState.money)
+		grid.queue_free()
+		return false
+
+	if MatchState.chem_feedstock != prev_feedstock + expected_feedstock_gain:
+		printerr("FAILED: Chem feedstock gain mismatch. Expected: ", prev_feedstock + expected_feedstock_gain, " got: ", MatchState.chem_feedstock)
+		grid.queue_free()
+		return false
+
+	print("PASS: Phase 1 economy verified: Dual resources, mines payout, Uranium 1-per-room limit, Chem plant feedstock payout.")
+	grid.queue_free()
 	return true
 
 func _test_eject_non_owner_when_room_claimed() -> bool:
