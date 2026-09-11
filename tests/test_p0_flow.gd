@@ -12,12 +12,16 @@ func _ready() -> void:
 	success = success and _test_grid_walkability_and_navigation()
 	success = success and _test_allies_claim_flow()
 	success = success and _test_invader_corridor_movement()
-	success = success and _test_no_build_menu()
+	success = success and _test_no_acid_tree_continuation_and_no_build_menu()
 	success = success and _test_eject_non_owner_when_room_claimed()
+	success = success and _test_income_generation()
+	success = success and _test_silicic_i_placement_rules()
+	success = success and _test_invader_attack_door_and_enter_room()
+	success = success and _test_victory_and_defeat_conditions()
 
 	if success:
 		print("========================================")
-		print("ALL P0 ACCEPTANCE TESTS PASSED!")
+		print("ALL chem-dorm V0 ACCEPTANCE TESTS PASSED!")
 		print("========================================")
 		get_tree().quit(0)
 	else:
@@ -265,14 +269,15 @@ func _test_invader_corridor_movement() -> bool:
 	grid.queue_free()
 	return true
 
-func _test_no_build_menu() -> bool:
-	print("\n[TEST 6] Testing No Build Menu & No Tower Building on Space...")
+func _test_no_acid_tree_continuation_and_no_build_menu() -> bool:
+	print("\n[TEST 6] Testing No Acid Tree Continuation & No Complex Build Menu...")
 	var files := DirAccess.get_files_at("res://scripts")
 	for f in files:
-		if f.contains("turret") or f.contains("build_menu") or f.contains("tower"):
+		var lf := f.to_lower()
+		if lf.contains("build_menu") or lf.contains("carbonate") or lf.contains("plant") or lf.contains("silicic_2") or lf.contains("silicic_ii"):
 			printerr("FAILED: Found forbidden script file: ", f)
 			return false
-	print("PASS: No build menu or tower logic present.")
+	print("PASS: Only Silicic I allowed, no higher acid tiers or build menus.")
 	return true
 
 func _test_eject_non_owner_when_room_claimed() -> bool:
@@ -498,3 +503,325 @@ func _test_eject_non_owner_when_room_claimed() -> bool:
 	print("PASS: Non-owners (player/allies) immediately ejected to door_exterior_cell on room claim, owner remains inside, room locked.")
 	grid.queue_free()
 	return true
+
+func _test_income_generation() -> bool:
+	print("\n[TEST 8] Testing Starter Mine Income Generation & Interruption...")
+	MatchState.reset_match()
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	var _r101: RoomData = grid.get_room_by_id("room_101")
+	MatchState.claim_room("room_101", "player")
+
+	if MatchState.money != 0:
+		printerr("FAILED: Initial money should be 0")
+		grid.queue_free()
+		return false
+
+	# 模拟经过一个产钱周期
+	MatchState._process(MatchState.STARTER_INCOME_INTERVAL)
+	if MatchState.money != MatchState.STARTER_INCOME_AMOUNT:
+		printerr("FAILED: Money after 1 interval should be %d, got %d" % [MatchState.STARTER_INCOME_AMOUNT, MatchState.money])
+		grid.queue_free()
+		return false
+
+	# 模拟再经过一个产钱周期
+	MatchState._process(MatchState.STARTER_INCOME_INTERVAL)
+	if MatchState.money != MatchState.STARTER_INCOME_AMOUNT * 2:
+		printerr("FAILED: Money after 2 intervals should be %d, got %d" % [MatchState.STARTER_INCOME_AMOUNT * 2, MatchState.money])
+		grid.queue_free()
+		return false
+
+	# 起步矿被拆光后停止产钱
+	MatchState.damage_starter("room_101", MatchState.STARTER_MAX_HP)
+	var current_money: int = MatchState.money
+	MatchState._process(MatchState.STARTER_INCOME_INTERVAL * 2.0)
+	if MatchState.money != current_money:
+		printerr("FAILED: Destroyed starter should not generate money! Got: ", MatchState.money)
+		grid.queue_free()
+		return false
+
+	print("PASS: Starter mine generates fixed income on interval, stops when destroyed.")
+	grid.queue_free()
+	return true
+
+func _test_silicic_i_placement_rules() -> bool:
+	print("\n[TEST 9] Testing Silicic I Placement Rules (Unclaimed, No Money, Obstacle, Valid)...")
+	var main_scene: MainGame = load("res://scenes/main.tscn").instantiate()
+	add_child(main_scene)
+
+	MatchState.reset_match()
+	for r in main_scene.grid_manager.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name)
+
+	# 1. 未占房不能造塔
+	MatchState.money = 500
+	var cell_in_101 := Vector2i(5, 5)
+	if main_scene.try_build_silicic_turret(cell_in_101):
+		printerr("FAILED: Should not allow building when player has not claimed a room")
+		main_scene.queue_free()
+		return false
+
+	# 2. 玩家占房但钱不够不能造塔
+	MatchState.claim_room("room_101", "player")
+	MatchState.money = MatchState.TURRET_COST - 1
+	if main_scene.try_build_silicic_turret(cell_in_101):
+		printerr("FAILED: Should not allow building when player lacks money")
+		main_scene.queue_free()
+		return false
+
+	# 3. 钱够了，但在起步矿、门、走廊等无效格子不能造塔
+	MatchState.money = MatchState.TURRET_COST * 5
+	var starter_cell := Vector2i(3, 4)
+	if main_scene.try_build_silicic_turret(starter_cell):
+		printerr("FAILED: Should not allow building on starter cell")
+		main_scene.queue_free()
+		return false
+
+	var door_cell := Vector2i(6, 12)
+	if main_scene.try_build_silicic_turret(door_cell):
+		printerr("FAILED: Should not allow building on door cell")
+		main_scene.queue_free()
+		return false
+
+	var corridor_cell := Vector2i(6, 13)
+	if main_scene.try_build_silicic_turret(corridor_cell):
+		printerr("FAILED: Should not allow building outside owned room")
+		main_scene.queue_free()
+		return false
+
+	# 4. 在房间空格成功扣钱建造
+	var initial_money: int = MatchState.money
+	if not main_scene.try_build_silicic_turret(cell_in_101):
+		printerr("FAILED: Failed to build Silicic I on valid empty floor cell")
+		main_scene.queue_free()
+		return false
+
+	if MatchState.money != initial_money - MatchState.TURRET_COST:
+		printerr("FAILED: Did not deduct turret cost properly. Remaining: ", MatchState.money)
+		main_scene.queue_free()
+		return false
+
+	if not main_scene.grid_manager.has_building_at(cell_in_101):
+		printerr("FAILED: Turret not registered in grid manager")
+		main_scene.queue_free()
+		return false
+
+	# 5. 不能在已有建筑的格子上重复建造
+	if main_scene.try_build_silicic_turret(cell_in_101):
+		printerr("FAILED: Should not allow duplicate building on same cell")
+		main_scene.queue_free()
+		return false
+
+	print("PASS: Silicic I respects room ownership, money cost, tile restrictions, and deduplication.")
+	main_scene.queue_free()
+	return true
+
+func _test_invader_attack_door_and_enter_room() -> bool:
+	print("\n[TEST 10] Testing Invader Door Attack, Breach Condition, and Room Entry...")
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	MatchState.reset_match()
+	for r in grid.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name)
+
+	# 玩家占领 room_101
+	MatchState.claim_room("room_101", "player")
+
+	var invader := InvaderActor.new()
+	add_child(invader)
+	invader.init_actor("invader", "入侵者", Color.RED, grid.invader_spawn_cell, grid)
+
+	# 倒计时结束，敌人入场
+	MatchState.current_phase = MatchState.Phase.INVADING
+	MatchState.phase_changed.emit(MatchState.Phase.INVADING)
+
+	# 验证：在敌人到达门外前，门 HP 不变
+	var initial_door_hp: int = MatchState.get_door_hp("room_101")
+	if initial_door_hp != MatchState.DOOR_MAX_HP:
+		printerr("FAILED: Initial door HP is not DOOR_MAX_HP")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 模拟敌人在路上移动一段过程
+	if invader.is_moving:
+		invader.current_cell = invader.target_cell
+		invader._on_step_completed()
+		invader._advance_path()
+		# 在路上时执行 _process
+		invader._process(1.0)
+		if MatchState.get_door_hp("room_101") != initial_door_hp:
+			printerr("FAILED: Door HP must not change while invader is not yet at door exterior!")
+			invader.queue_free()
+			grid.queue_free()
+			return false
+
+	# 走完所有走廊路径到达 door_exterior_cell (6, 13)
+	while invader.is_moving:
+		invader.current_cell = invader.target_cell
+		invader._on_step_completed()
+		invader._advance_path()
+
+	if invader.current_cell != Vector2i(6, 13):
+		printerr("FAILED: Invader reached wrong cell: ", invader.current_cell)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	if invader.invader_state != InvaderActor.InvaderState.STOPPED_AT_DOOR:
+		printerr("FAILED: Invader state should be STOPPED_AT_DOOR")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 到达门外后开始拆门
+	invader._process(MatchState.INVADER_ATTACK_INTERVAL)
+	var expected_hp: int = MatchState.DOOR_MAX_HP - MatchState.INVADER_ATTACK_DAMAGE
+	if MatchState.get_door_hp("room_101") != expected_hp:
+		printerr("FAILED: Door HP did not decrease as expected. Got: ", MatchState.get_door_hp("room_101"))
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 门破前敌人不进 interior
+	if MatchState.is_door_broken("room_101"):
+		printerr("FAILED: Door should not be broken yet")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	var r101: RoomData = grid.get_room_by_id("room_101")
+	if r101.is_cell_interior(invader.current_cell):
+		printerr("FAILED: Invader entered interior before door broke!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 持续攻击直到门破
+	while not MatchState.is_door_broken("room_101"):
+		invader._process(MatchState.INVADER_ATTACK_INTERVAL)
+
+	if not MatchState.is_door_broken("room_101"):
+		printerr("FAILED: Door should be broken now")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 门破后敌人开始进入房间
+	invader._process(0.1)
+	if invader.invader_state != InvaderActor.InvaderState.ENTERING_ROOM and invader.invader_state != InvaderActor.InvaderState.ATTACKING_STARTER:
+		printerr("FAILED: Invader state after door break should be ENTERING_ROOM or ATTACKING_STARTER, got: ", invader.invader_state)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 模拟敌人走入房间内部到达起步矿
+	while invader.is_moving:
+		invader.current_cell = invader.target_cell
+		invader._on_step_completed()
+		invader._advance_path()
+
+	if invader.invader_state != InvaderActor.InvaderState.ATTACKING_STARTER:
+		printerr("FAILED: Invader did not transition to ATTACKING_STARTER after reaching starter")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	print("PASS: Door HP stays intact before arrival, takes damage at door, breaches at 0 HP, invader enters interior toward starter.")
+	invader.queue_free()
+	grid.queue_free()
+	return true
+
+func _test_victory_and_defeat_conditions() -> bool:
+	print("\n[TEST 11] Testing Victory & Defeat Conditions (Starter Destroyed vs Invader Killed)...")
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	# --- 场景 1: 起步矿被拆光 -> 玩家败 ---
+	MatchState.reset_match()
+	for r in grid.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name)
+	MatchState.claim_room("room_101", "player")
+
+	var invader := InvaderActor.new()
+	add_child(invader)
+	invader.init_actor("invader", "入侵者", Color.RED, Vector2i(3, 4), grid)
+	invader.target_room_id = "room_101"
+	invader.invader_state = InvaderActor.InvaderState.ATTACKING_STARTER
+
+	# 拆毁起步矿
+	MatchState.damage_starter("room_101", MatchState.STARTER_MAX_HP)
+	if MatchState.game_result != MatchState.GameResult.DEFEAT:
+		printerr("FAILED: Game result should be DEFEAT when player's starter is destroyed")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	invader._process(0.1)
+	if invader.invader_state != InvaderActor.InvaderState.IDLE:
+		printerr("FAILED: Invader should stop action and enter IDLE on defeat")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	invader.queue_free()
+
+	# --- 场景 2: 硅酸 I 射程内炮击，敌人 HP 到 0 -> 玩家胜，敌人停止行动 ---
+	MatchState.reset_match()
+	for r in grid.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name)
+	MatchState.claim_room("room_101", "player")
+
+	var invader2 := InvaderActor.new()
+	add_child(invader2)
+	# 放置在门外 (6, 13)
+	invader2.init_actor("invader", "入侵者", Color.RED, Vector2i(6, 13), grid)
+	invader2.visible = true
+	invader2.invader_state = InvaderActor.InvaderState.STOPPED_AT_DOOR
+
+	# 在 (6, 11) 放置硅酸 I（距离 (6, 13) 为 2 格，在 4 格射程内）
+	var turret := SilicicTurret.new()
+	grid.add_turret(Vector2i(6, 11), turret)
+	turret.init_turret(Vector2i(6, 11), invader2, grid)
+
+	# 模拟炮台射击敌人
+	var initial_hp: int = MatchState.invader_hp
+	turret._process(MatchState.TURRET_FIRE_INTERVAL)
+	if MatchState.invader_hp != initial_hp - MatchState.TURRET_DAMAGE:
+		printerr("FAILED: Invader HP was not damaged by turret. Expected: ", initial_hp - MatchState.TURRET_DAMAGE, " got: ", MatchState.invader_hp)
+		invader2.queue_free()
+		grid.queue_free()
+		return false
+
+	# 持续开火击杀敌人
+	while MatchState.invader_hp > 0:
+		turret._process(MatchState.TURRET_FIRE_INTERVAL)
+
+	if MatchState.game_result != MatchState.GameResult.VICTORY:
+		printerr("FAILED: Game result should be VICTORY when invader HP reaches 0")
+		invader2.queue_free()
+		grid.queue_free()
+		return false
+
+	if invader2.is_alive():
+		printerr("FAILED: Invader should be dead when HP reaches 0")
+		invader2.queue_free()
+		grid.queue_free()
+		return false
+
+	if invader2.invader_state != InvaderActor.InvaderState.DEAD:
+		printerr("FAILED: Invader state should be DEAD")
+		invader2.queue_free()
+		grid.queue_free()
+		return false
+
+	print("PASS: Starter destroyed triggers DEFEAT; Turret kills invader in range, triggers VICTORY and halts invader.")
+	invader2.queue_free()
+	grid.queue_free()
+	return true
+

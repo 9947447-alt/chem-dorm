@@ -24,6 +24,7 @@ var corridor_cells: Array[Vector2i] = []
 
 var astar_full: AStarGrid2D
 var astar_corridor: AStarGrid2D
+var turrets: Dictionary = {} # Vector2i -> SilicicTurret
 
 func _ready() -> void:
 	_init_rooms()
@@ -254,6 +255,22 @@ func get_invader_path_to_cell(from_cell: Vector2i, to_cell: Vector2i) -> Array[V
 	var raw_path: Array[Vector2i] = astar_corridor.get_id_path(from_cell, to_cell)
 	return raw_path
 
+func get_invader_path_to_starter(from_cell: Vector2i, room: RoomData) -> Array[Vector2i]:
+	if not MatchState.is_door_broken(room.room_id):
+		return []
+	astar_full.set_point_solid(room.door_cell, false)
+	astar_full.set_point_solid(from_cell, false)
+	var path: Array[Vector2i] = astar_full.get_id_path(from_cell, room.starter_cells[0])
+	return path
+
+func has_building_at(cell: Vector2i) -> bool:
+	return turrets.has(cell)
+
+func add_turret(cell: Vector2i, turret: SilicicTurret) -> void:
+	turrets[cell] = turret
+	add_child(turret)
+	queue_redraw()
+
 func get_closest_door_exterior_to(from_cell: Vector2i) -> Vector2i:
 	var closest_cell: Vector2i = Vector2i.ZERO
 	var min_dist: int = 999999
@@ -292,17 +309,28 @@ func _draw() -> void:
 				draw_rect(rect, Color(0.20, 0.22, 0.27))
 				draw_rect(rect, Color(0.25, 0.28, 0.34), false, 1.0)
 			CellType.STARTER:
-				draw_rect(rect, Color(0.22, 0.42, 0.65))
-				draw_rect(rect, Color(0.40, 0.65, 0.95), false, 1.5)
+				var room := get_room_by_starter_cell(cell)
+				var s_hp: int = MatchState.get_starter_hp(room.room_id) if room != null else MatchState.STARTER_MAX_HP
+				if s_hp <= 0:
+					draw_rect(rect, Color(0.2, 0.2, 0.22))
+					draw_rect(rect, Color(0.6, 0.2, 0.2), false, 1.5)
+				else:
+					draw_rect(rect, Color(0.22, 0.42, 0.65))
+					draw_rect(rect, Color(0.40, 0.65, 0.95), false, 1.5)
 			CellType.DOOR:
 				var room := get_room_at_cell(cell)
-				var is_locked: bool = room != null and MatchState.is_room_locked(room.room_id)
-				if is_locked:
-					draw_rect(rect, Color(0.85, 0.28, 0.22))
-					draw_rect(rect, Color(1.0, 0.45, 0.35), false, 2.0)
+				var is_broken: bool = room != null and MatchState.is_door_broken(room.room_id)
+				if is_broken:
+					draw_rect(rect, Color(0.12, 0.12, 0.14))
+					draw_rect(rect, Color(0.95, 0.2, 0.2), false, 1.5)
 				else:
-					draw_rect(rect, Color(0.18, 0.72, 0.65))
-					draw_rect(rect, Color(0.35, 0.95, 0.85), false, 2.0)
+					var is_locked: bool = room != null and MatchState.is_room_locked(room.room_id)
+					if is_locked:
+						draw_rect(rect, Color(0.85, 0.28, 0.22))
+						draw_rect(rect, Color(1.0, 0.45, 0.35), false, 2.0)
+					else:
+						draw_rect(rect, Color(0.18, 0.72, 0.65))
+						draw_rect(rect, Color(0.35, 0.95, 0.85), false, 2.0)
 
 	# Draw Room labels and metadata
 	var font := ThemeDB.fallback_font

@@ -72,3 +72,50 @@ func _spawn_all_actors() -> void:
 	# Start Ally AIs
 	for bot in allies:
 		bot.start_ai()
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		var mouse_pos: Vector2 = get_global_mouse_position()
+		var cell: Vector2i = grid_manager.world_to_cell(mouse_pos)
+		try_build_silicic_turret(cell)
+
+func try_build_silicic_turret(cell: Vector2i) -> bool:
+	# 1. 检查玩家是否占房
+	var player_room_id: String = MatchState.get_player_owned_room_id()
+	if player_room_id == "":
+		print("建造失败: 未占房不能造塔")
+		return false
+
+	var room: RoomData = grid_manager.get_room_by_id(player_room_id)
+	if room == null:
+		return false
+
+	# 2. 检查是否在玩家占有的房间内且为空地板
+	if not room.is_cell_interior(cell):
+		print("建造失败: 只能在自己占领的房间内部建造")
+		return false
+
+	if room.is_cell_starter(cell) or cell == room.door_cell:
+		print("建造失败: 不能在起步矿或门上建造")
+		return false
+
+	if grid_manager.has_building_at(cell):
+		print("建造失败: 该格已有建筑")
+		return false
+
+	# 3. 检查金钱是否足够
+	if MatchState.money < MatchState.TURRET_COST:
+		print("建造失败: 钱不够不能造塔 (需要 %d, 当前 %d)" % [MatchState.TURRET_COST, MatchState.money])
+		return false
+
+	# 4. 扣钱并建造
+	if MatchState.spend_money(MatchState.TURRET_COST):
+		var turret := SilicicTurret.new()
+		turret.name = "SilicicTurret_%d_%d" % [cell.x, cell.y]
+		grid_manager.add_turret(cell, turret)
+		turret.init_turret(cell, invader, grid_manager)
+		print("建造成功: 在 %s 建造硅酸炮台 I" % [cell])
+		return true
+
+	return false
+
