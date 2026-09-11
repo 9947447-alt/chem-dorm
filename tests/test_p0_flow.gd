@@ -16,6 +16,7 @@ func _ready() -> void:
 	success = success and _test_phase_2_acid_tree()
 	success = success and _test_phase_3_hatch_system()
 	success = success and _test_phase_4_invader_system()
+	success = success and _test_phase_5_ally_and_hightech()
 	success = success and _test_eject_non_owner_when_room_claimed()
 	success = success and _test_income_generation()
 	success = success and _test_silicic_i_placement_rules()
@@ -788,6 +789,187 @@ func _test_phase_4_invader_system() -> bool:
 
 	print("PASS: Phase 4 verified: Attack-only XP, pressure spike, skills gating, remote heal pads retreat, and Lv 15 breaking Ion Gate V.")
 	invader.queue_free()
+	grid.queue_free()
+	return true
+
+func _test_phase_5_ally_and_hightech() -> bool:
+	print("\n[TEST Phase 5] Testing High-Tech 4-Piece, Buff Calculations, and Ally Autonomous Building...")
+	MatchState.reset_match()
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	for r in grid.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name)
+
+	# --- 1. 验证高科技四件套：催化柱、聚焦镜、机械臂、稳压堆限一房一座 ---
+	MatchState.claim_room("room_101", "player")
+	MatchState.add_money(50000)
+
+	var t_cell := Vector2i(5, 5)
+	var turret := SilicicTurret.new()
+	turret.room_id = "room_101"
+	grid.add_turret(t_cell, turret)
+	turret.init_turret(t_cell, null, grid)
+
+	# 初始状态：射程 4.0，射击间隔 0.8
+	if not is_equal_approx(turret.get_effective_range(), 4.0):
+		printerr("FAILED: Initial turret range should be 4.0, got: ", turret.get_effective_range())
+		turret.queue_free()
+		grid.queue_free()
+		return false
+	if not is_equal_approx(turret.get_effective_interval(), 0.8):
+		printerr("FAILED: Initial turret interval should be 0.8, got: ", turret.get_effective_interval())
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# (1) 建造催化柱在 (6, 5)（相邻格） -> 射速提升 (间隔缩短为 0.8 * 0.75 = 0.6)
+	var col_cell := Vector2i(6, 5)
+	if not MatchState.buy_and_place_building("room_101", "catalytic_column", "player", col_cell):
+		printerr("FAILED: Failed to build catalytic_column")
+		turret.queue_free()
+		grid.queue_free()
+		return false
+	if not is_equal_approx(turret.get_effective_interval(), 0.6):
+		printerr("FAILED: Catalytic column did not speed up fire rate, got: ", turret.get_effective_interval())
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# (2) 建造聚焦镜在 (5, 6)（相邻格） -> 射程 +1 (4.0 + 1.0 = 5.0)
+	var lens_cell := Vector2i(5, 6)
+	if not MatchState.buy_and_place_building("room_101", "focus_lens", "player", lens_cell):
+		printerr("FAILED: Failed to build focus_lens")
+		turret.queue_free()
+		grid.queue_free()
+		return false
+	if not is_equal_approx(turret.get_effective_range(), 5.0):
+		printerr("FAILED: Focus lens did not increase range by 1, got: ", turret.get_effective_range())
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# (3) 建造机械臂在 (7, 5)，铁矿在 (7, 6)（相邻机械臂） -> 铁矿基础产 5，机械臂加成 35% -> ceil(5 * 1.35) = 7
+	var arm_cell := Vector2i(7, 5)
+	var mine_cell := Vector2i(7, 6)
+	if not MatchState.buy_and_place_building("room_101", "robotic_arm", "player", arm_cell):
+		printerr("FAILED: Failed to build robotic_arm")
+		turret.queue_free()
+		grid.queue_free()
+		return false
+	if not MatchState.buy_and_place_building("room_101", "iron_mine", "player", mine_cell):
+		printerr("FAILED: Failed to build iron_mine")
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	var money_before_tick: int = MatchState.get_money()
+	MatchState._process(MatchState.STARTER_INCOME_INTERVAL)
+	# 产出包含起步矿 (10) + 机械臂加成铁矿 (7) = 17
+	var gained: int = MatchState.get_money() - money_before_tick
+	if gained != 17:
+		printerr("FAILED: Robotic arm adjacent income mismatch, expected 17 got: ", gained)
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# (4) 建造稳压堆在 (4, 5) -> 全房温和加速，限一房一座
+	var reg_cell := Vector2i(4, 5)
+	if not MatchState.buy_and_place_building("room_101", "regulator_stack", "player", reg_cell):
+		printerr("FAILED: Failed to build regulator_stack")
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# 第二座稳压堆必须被拒绝
+	var reg_cell2 := Vector2i(4, 6)
+	var second_reg_check := MatchState.can_build("room_101", "regulator_stack", "player", reg_cell2)
+	if second_reg_check.get("success", false):
+		printerr("FAILED: Second regulator_stack must be rejected (max 1 per room)!")
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# 稳压堆对炮台射速再加成 15% (0.6 * 0.85 = 0.51)
+	if not is_equal_approx(turret.get_effective_interval(), 0.51):
+		printerr("FAILED: Regulator stack did not boost turret interval, got: ", turret.get_effective_interval())
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# --- 2. 验证盟友自主建造与独立资源体系 ---
+	var room_102: RoomData = grid.get_room_by_id("room_102")
+	MatchState.claim_room("room_102", "ally_1")
+
+	var bot := AllyBot.new()
+	add_child(bot)
+	bot.init_actor("ally_1", "盟友1", Color.GREEN, room_102.starter_cells[0], grid)
+	bot.bot_state = AllyBot.BotState.CLAIMED
+	bot.target_room_id = "room_102"
+
+	# 给盟友充值 5000 金钱，验证玩家金钱不变
+	var p_money_snapshot: int = MatchState.get_money()
+	MatchState.add_actor_money("ally_1", 5000)
+	if MatchState.get_money() != p_money_snapshot:
+		printerr("FAILED: Ally money leaked into player money ledger!")
+		bot.queue_free()
+		turret.queue_free()
+		grid.queue_free()
+		return false
+	if MatchState.get_actor_money("ally_1") != 5000:
+		printerr("FAILED: Ally 1 did not receive 5000 money")
+		bot.queue_free()
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# 触发盟友思考 1：造炮台
+	bot._think_and_build()
+	var ally_turret_found: bool = false
+	for t in grid.turrets.values():
+		if t.room_id == "room_102":
+			ally_turret_found = true
+			break
+	if not ally_turret_found:
+		printerr("FAILED: Ally did not autonomously build a turret in its room!")
+		bot.queue_free()
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# 触发盟友思考 2：建矿拓展基础经济
+	bot._think_and_build()
+	var ally_buildings: Array = MatchState.get_room_buildings("room_102")
+	if ally_buildings.is_empty():
+		printerr("FAILED: Ally did not autonomously construct basic mine in room_102!")
+		bot.queue_free()
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# 触发盟友思考 3：升门
+	bot._think_and_build()
+	if MatchState.get_door_rank("room_102") != 2:
+		printerr("FAILED: Ally did not autonomously upgrade hatch to rank 2!")
+		bot.queue_free()
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# 验证盟友的所有建筑和炮台只在 room_102 内部，绝不越界
+	for b in ally_buildings:
+		var b_c: Vector2i = b.get("cell", Vector2i.ZERO)
+		if not room_102.is_cell_interior(b_c):
+			printerr("FAILED: Ally building was placed outside room_102 interior! Cell: ", b_c)
+			bot.queue_free()
+			turret.queue_free()
+			grid.queue_free()
+			return false
+
+	print("PASS: Phase 5 verified: High-tech 4-piece, buffs, regulator 1-per-room, and Ally autonomous building & ledger separation.")
+	bot.queue_free()
+	turret.queue_free()
 	grid.queue_free()
 	return true
 

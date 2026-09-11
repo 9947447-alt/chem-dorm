@@ -122,6 +122,46 @@ const BUILD_CATALOG: Dictionary = {
 		"income_money": 0,
 		"income_feedstock": 0,
 		"max_per_room": 999
+	},
+	"catalytic_column": {
+		"id": "catalytic_column",
+		"name": "催化柱",
+		"category": "high_tech",
+		"cost_money": 800,
+		"cost_feedstock": 0,
+		"income_money": 0,
+		"income_feedstock": 0,
+		"max_per_room": 999
+	},
+	"focus_lens": {
+		"id": "focus_lens",
+		"name": "聚焦镜",
+		"category": "high_tech",
+		"cost_money": 600,
+		"cost_feedstock": 0,
+		"income_money": 0,
+		"income_feedstock": 0,
+		"max_per_room": 999
+	},
+	"robotic_arm": {
+		"id": "robotic_arm",
+		"name": "机械臂",
+		"category": "high_tech",
+		"cost_money": 1000,
+		"cost_feedstock": 0,
+		"income_money": 0,
+		"income_feedstock": 0,
+		"max_per_room": 999
+	},
+	"regulator_stack": {
+		"id": "regulator_stack",
+		"name": "稳压堆",
+		"category": "high_tech",
+		"cost_money": 2000,
+		"cost_feedstock": 0,
+		"income_money": 0,
+		"income_feedstock": 0,
+		"max_per_room": 1 # 稳压堆一房一座
 	}
 }
 
@@ -272,6 +312,12 @@ func set_player_room(room_id: String) -> void:
 		player_room_changed.emit(player_room_id)
 
 # --- 资源管理 ---
+func get_money() -> int:
+	return money
+
+func get_feedstock() -> int:
+	return chem_feedstock
+
 func add_money(amount: int) -> void:
 	money += amount
 	money_changed.emit(money)
@@ -381,6 +427,22 @@ func count_building_type_in_room(room_id: String, item_id: String) -> int:
 
 func has_chem_plant(room_id: String) -> bool:
 	return count_building_type_in_room(room_id, "chem_plant") > 0
+
+func has_regulator_stack(room_id: String) -> bool:
+	return count_building_type_in_room(room_id, "regulator_stack") > 0
+
+func has_adjacent_high_tech(cell: Vector2i, item_id: String) -> bool:
+	var neighbors := [
+		cell + Vector2i(1, 0),
+		cell + Vector2i(-1, 0),
+		cell + Vector2i(0, 1),
+		cell + Vector2i(0, -1)
+	]
+	for n in neighbors:
+		if cell_to_building.has(n):
+			if cell_to_building[n].get("id", "") == item_id:
+				return true
+	return false
 
 func can_build(room_id: String, item_id: String, actor_id: String, cell: Vector2i) -> Dictionary:
 	if room_owners.get(room_id, "") != actor_id:
@@ -862,13 +924,21 @@ func _process(delta: float) -> void:
 			var b_timer: float = building_income_timer.get(r_id, 0.0) + delta
 			if b_timer >= STARTER_INCOME_INTERVAL:
 				b_timer -= STARTER_INCOME_INTERVAL
+				var has_reg: bool = has_regulator_stack(r_id)
 				for b in b_list:
 					var m_inc: int = b.get("income_money", 0)
 					var f_inc: int = b.get("income_feedstock", 0)
+					var b_cell: Vector2i = b.get("cell", Vector2i.ZERO)
+					var has_arm: bool = has_adjacent_high_tech(b_cell, "robotic_arm")
+					var mult: float = 1.0
+					if has_arm:
+						mult += 0.35
+					if has_reg:
+						mult += 0.15
 					if m_inc > 0:
-						add_actor_money(owner, m_inc)
+						add_actor_money(owner, int(ceil(float(m_inc) * mult)))
 					if f_inc > 0:
-						add_actor_feedstock(owner, f_inc)
+						add_actor_feedstock(owner, int(ceil(float(f_inc) * mult)))
 			building_income_timer[r_id] = b_timer
 
 		# 3. 舱门中段微量回血（未破损状态下自动恢复）

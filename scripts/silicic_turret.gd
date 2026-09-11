@@ -76,9 +76,15 @@ func _process(delta: float) -> void:
 		return
 
 	var eff_range: float = maxf(1.0, turret_range - range_reduction)
+	if MatchState.has_adjacent_high_tech(grid_cell, "focus_lens"):
+		eff_range += 1.0
 	var range_px: float = eff_range * float(GridMapManager.TILE_SIZE)
 	var dist: float = global_position.distance_to(target_invader.global_position)
 	var eff_interval: float = fire_interval * (1.35 if fog_slow_timer > 0.0 else 1.0)
+	if MatchState.has_adjacent_high_tech(grid_cell, "catalytic_column"):
+		eff_interval *= 0.75
+	if MatchState.has_regulator_stack(room_id):
+		eff_interval *= 0.85
 
 	if dist <= range_px:
 		if substance == "perchloric":
@@ -188,4 +194,18 @@ func _draw() -> void:
 	# 绘制攻击激光射线
 	if laser_visible_timer > 0.0:
 		draw_line(Vector2.ZERO, laser_end_point, laser_color, 3.5)
+
+func get_effective_range() -> float:
+	var eff: float = maxf(1.0, turret_range - range_reduction)
+	if MatchState.has_adjacent_high_tech(grid_cell, "focus_lens"):
+		eff += 1.0
+	return eff
+
+func get_effective_interval() -> float:
+	var eff: float = fire_interval * (1.35 if fog_slow_timer > 0.0 else 1.0)
+	if MatchState.has_adjacent_high_tech(grid_cell, "catalytic_column"):
+		eff *= 0.75
+	if MatchState.has_regulator_stack(room_id):
+		eff *= 0.85
+	return eff
 

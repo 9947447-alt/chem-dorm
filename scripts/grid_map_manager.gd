@@ -277,6 +277,26 @@ func add_turret(cell: Vector2i, turret: SilicicTurret) -> void:
 	add_child(turret)
 	queue_redraw()
 
+func build_turret_for_actor(room_id: String, cell: Vector2i, actor_id: String, target_invader: ActorBase = null) -> bool:
+	if MatchState.get_room_owner(room_id) != actor_id:
+		return false
+	var room: RoomData = get_room_by_id(room_id)
+	if room == null or not room.is_cell_interior(cell):
+		return false
+	if room.is_cell_starter(cell) or cell == room.door_cell:
+		return false
+	if has_building_at(cell):
+		return false
+	if not MatchState.spend_actor_money(actor_id, MatchState.TURRET_COST):
+		return false
+	
+	var turret := SilicicTurret.new()
+	turret.name = "Turret_%d_%d" % [cell.x, cell.y]
+	turret.room_id = room_id
+	add_turret(cell, turret)
+	turret.init_turret(cell, target_invader, self)
+	return true
+
 func get_closest_door_exterior_to(from_cell: Vector2i) -> Vector2i:
 	var closest_cell: Vector2i = Vector2i.ZERO
 	var min_dist: int = 999999
@@ -407,6 +427,18 @@ func _draw() -> void:
 			"chem_plant":
 				b_color = Color(0.7, 0.25, 0.85)
 				b_sym = "化"
+			"catalytic_column":
+				b_color = Color(0.85, 0.2, 0.6)
+				b_sym = "催"
+			"focus_lens":
+				b_color = Color(0.1, 0.8, 0.9)
+				b_sym = "镜"
+			"robotic_arm":
+				b_color = Color(0.95, 0.55, 0.1)
+				b_sym = "臂"
+			"regulator_stack":
+				b_color = Color(0.2, 0.4, 0.95)
+				b_sym = "堆"
 		draw_rect(b_rect, b_color)
 		draw_rect(b_rect, b_color.lightened(0.3), false, 1.5)
 		draw_string(font, Vector2(b_cell.x * TILE_SIZE + 4, b_cell.y * TILE_SIZE + TILE_SIZE - 8), b_sym, HORIZONTAL_ALIGNMENT_CENTER, TILE_SIZE - 8, 11, Color.WHITE)

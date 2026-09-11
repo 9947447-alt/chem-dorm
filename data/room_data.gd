@@ -31,3 +31,14 @@ func is_cell_interior(cell: Vector2i) -> bool:
 
 func is_cell_starter(cell: Vector2i) -> bool:
 	return cell in starter_cells
+
+func get_interior_cells() -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	var start_x: int = interior_rect.position.x
+	var end_x: int = start_x + interior_rect.size.x
+	var start_y: int = interior_rect.position.y
+	var end_y: int = start_y + interior_rect.size.y
+	for x in range(start_x, end_x):
+		for y in range(start_y, end_y):
+			cells.append(Vector2i(x, y))
+	return cells
