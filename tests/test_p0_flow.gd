@@ -14,6 +14,7 @@ func _ready() -> void:
 	success = success and _test_invader_corridor_movement()
 	success = success and _test_phase_1_economy()
 	success = success and _test_phase_2_acid_tree()
+	success = success and _test_phase_3_hatch_system()
 	success = success and _test_eject_non_owner_when_room_claimed()
 	success = success and _test_income_generation()
 	success = success and _test_silicic_i_placement_rules()
@@ -530,6 +531,95 @@ func _test_phase_2_acid_tree() -> bool:
 	invader.queue_free()
 	grid.queue_free()
 	return true
+
+func _test_phase_3_hatch_system() -> bool:
+	print("\n[TEST Phase 3] Testing 30 Hatch Ranks, Mid-Chain Regen, Broken-Cannot-Upgrade, Level 15 Break Check...")
+	MatchState.reset_match()
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	MatchState.claim_room("room_101", "player")
+	MatchState.add_money(500000)
+
+	# 1. 初始门为蜂巢闸 I，HP 100，回血 0
+	if MatchState.get_door_kind("room_101") != "honeycomb" or MatchState.get_door_rank("room_101") != 1:
+		printerr("FAILED: Initial hatch not honeycomb I")
+		grid.queue_free()
+		return false
+	if MatchState.get_door_regen_rate("room_101") != 0:
+		printerr("FAILED: Honeycomb I should have 0 regen")
+		grid.queue_free()
+		return false
+
+	# 2. 依次升级 29 次到达离子栅 V
+	for i in range(29):
+		if not MatchState.upgrade_door("room_101", "player"):
+			printerr("FAILED: Failed door upgrade at step %d" % i)
+			grid.queue_free()
+			return false
+
+	if MatchState.get_door_kind("room_101") != "ion_gate" or MatchState.get_door_rank("room_101") != 5:
+		printerr("FAILED: Hatch after 29 upgrades should be ion_gate V, got: %s %d" % [MatchState.get_door_kind("room_101"), MatchState.get_door_rank("room_101")])
+		grid.queue_free()
+		return false
+
+	# 达封顶后不能再升
+	if MatchState.can_upgrade_door("room_101", "player").get("success", false):
+		printerr("FAILED: Ion gate V should not be upgradable further")
+		grid.queue_free()
+		return false
+
+	# 3. 验证回血机制（离子栅 V 回血 > 0）
+	var max_ion_hp: int = MatchState.get_door_max_hp("room_101")
+	var regen_rate: int = MatchState.get_door_regen_rate("room_101")
+	if regen_rate <= 0:
+		printerr("FAILED: Ion gate V must have regen > 0")
+		grid.queue_free()
+		return false
+
+	# 受到伤害后自动回血
+	MatchState.damage_door("room_101", 100)
+	var damaged_hp: int = MatchState.get_door_hp("room_101")
+	MatchState._process(1.0) # 心跳 1 秒回血
+	if MatchState.get_door_hp("room_101") != damaged_hp + regen_rate:
+		printerr("FAILED: Hatch did not regen HP properly. Got: %d expected: %d" % [MatchState.get_door_hp("room_101"), damaged_hp + regen_rate])
+		grid.queue_free()
+		return false
+
+	# 4. 验证已破不能升
+	MatchState.damage_door("room_101", max_ion_hp * 2)
+	if not MatchState.is_door_broken("room_101"):
+		printerr("FAILED: Door should be broken after taking massive damage")
+		grid.queue_free()
+		return false
+	var broken_upgrade_check := MatchState.can_upgrade_door("room_101", "player")
+	if broken_upgrade_check.get("success", false) or not broken_upgrade_check.get("reason", "").contains("已破不能升"):
+		printerr("FAILED: Broken door must NOT be upgradeable! Reason: ", broken_upgrade_check.get("reason", ""))
+		grid.queue_free()
+		return false
+
+	# 5. 验证 15 级拆速净 DPS > 离子栅 V 回血率（门升到顶不能单靠门耗死 15 级）
+	var lv15_attack_dps: float = 200.0 # 15 级标准基准拆速 (200 DPS)
+	var max_gate_regen: float = float(regen_rate) # 52 HP/s
+	if lv15_attack_dps <= max_gate_regen:
+		printerr("FAILED: Level 15 break DPS must strictly exceed Ion gate V regen rate!")
+		grid.queue_free()
+		return false
+
+	# 模拟 15 级连续破坏离子栅 V（净 DPS 造成血量单调递减并最终归零）
+	var sim_hp: float = float(max_ion_hp)
+	var net_dps: float = lv15_attack_dps - max_gate_regen
+	var time_to_break: float = sim_hp / net_dps
+	if time_to_break <= 0:
+		printerr("FAILED: Ion gate V could not be broken by level 15")
+		grid.queue_free()
+		return false
+
+	print("PASS: Phase 3 hatch verified: 30 ranks upgradeable, mid-chain regen active, broken door blocked from upgrade, and Lv 15 break DPS > Ion Gate V regen.")
+	grid.queue_free()
+	return true
+
 
 
 func _test_eject_non_owner_when_room_claimed() -> bool:

@@ -154,6 +154,13 @@ var room_buildings: Dictionary = {} # room_id -> Array[Dictionary]
 var cell_to_building: Dictionary = {} # Vector2i -> Dictionary
 var building_income_timer: Dictionary = {} # room_id -> float
 
+# 舱门三十档运行时状态
+var door_kind: Dictionary = {} # room_id -> String
+var door_rank: Dictionary = {} # room_id -> int
+var door_max_hp: Dictionary = {} # room_id -> int
+var door_regen: Dictionary = {} # room_id -> int
+var door_regen_timer: Dictionary = {} # room_id -> float
+
 # V0 对局运行时状态
 var game_result: GameResult = GameResult.NONE
 var door_hp: Dictionary = {} # String (room_id) -> int
@@ -185,6 +192,11 @@ func reset_match(countdown_duration: float = 25.0) -> void:
 	room_buildings.clear()
 	cell_to_building.clear()
 	building_income_timer.clear()
+	door_kind.clear()
+	door_rank.clear()
+	door_max_hp.clear()
+	door_regen.clear()
+	door_regen_timer.clear()
 	invader_hp = INVADER_MAX_HP
 	invader_target_room_id = ""
 
@@ -192,6 +204,11 @@ func register_room(room_id: String, display_name: String = "") -> void:
 	if not room_owners.has(room_id):
 		room_owners[room_id] = ""
 		room_locked[room_id] = false
+		door_kind[room_id] = "honeycomb"
+		door_rank[room_id] = 1
+		door_max_hp[room_id] = DOOR_MAX_HP
+		door_regen[room_id] = 0
+		door_regen_timer[room_id] = 0.0
 		door_hp[room_id] = DOOR_MAX_HP
 		starter_hp[room_id] = STARTER_MAX_HP
 		door_broken[room_id] = false
@@ -628,20 +645,155 @@ func upgrade_turret(turret: SilicicTurret, chosen_branch: String = "") -> bool:
 	return true
 
 
+# --- 舱门三十档体系 ---
+const HATCH_KINDS: Array[String] = [
+	"honeycomb",    # 蜂巢闸
+	"iris",         # 虹膜锁
+	"ln2_curtain",  # 液氮帘 (中段起微量回血)
+	"zeolite_flap", # 沸石瓣
+	"lattice_lock", # 晶格锁
+	"ion_gate"      # 离子栅 (终局封顶)
+]
+
+const HATCH_KIND_NAMES: Dictionary = {
+	"honeycomb": "蜂巢闸",
+	"iris": "虹膜锁",
+	"ln2_curtain": "液氮帘",
+	"zeolite_flap": "沸石瓣",
+	"lattice_lock": "晶格锁",
+	"ion_gate": "离子栅"
+}
+
+func get_door_kind(room_id: String) -> String:
+	return door_kind.get(room_id, "honeycomb")
+
+func get_door_rank(room_id: String) -> int:
+	return door_rank.get(room_id, 1)
+
+func get_door_max_hp(room_id: String) -> int:
+	return door_max_hp.get(room_id, DOOR_MAX_HP)
+
+func get_door_regen_rate(room_id: String) -> int:
+	return door_regen.get(room_id, 0)
+
+func get_door_display_name(room_id: String) -> String:
+	var kind: String = get_door_kind(room_id)
+	var rank: int = get_door_rank(room_id)
+	var k_name: String = HATCH_KIND_NAMES.get(kind, kind)
+	var roman_list: Array[String] = ["", "I", "II", "III", "IV", "V"]
+	var r_str: String = roman_list[rank] if rank >= 1 and rank <= 5 else str(rank)
+	return "%s %s" % [k_name, r_str]
+
+func get_hatch_stats(kind: String, rank: int) -> Dictionary:
+	var max_h: int = 100
+	var reg: int = 0
+	match kind:
+		"honeycomb":
+			max_h = 100 + (rank - 1) * 75 # 100..400
+			reg = 0
+		"iris":
+			max_h = 500 + (rank - 1) * 150 # 500..1100
+			reg = 0
+		"ln2_curtain":
+			# 中段起微量回血
+			max_h = 1400 + (rank - 1) * 350 # 1400..2800
+			reg = 3 + (rank - 1) * 2 # 3, 5, 7, 9, 11 HP/s
+		"zeolite_flap":
+			max_h = 3400 + (rank - 1) * 700 # 3400..6200
+			reg = 14 + (rank - 1) * 2 # 14, 16, 18, 20, 22 HP/s
+		"lattice_lock":
+			max_h = 7500 + (rank - 1) * 1500 # 7500..13500
+			reg = 25 + (rank - 1) * 3 # 25, 28, 31, 34, 37 HP/s
+		"ion_gate":
+			# 终局封顶
+			max_h = 16000 + (rank - 1) * 3500 # 16000..30000
+			reg = 40 + (rank - 1) * 3 # 40, 43, 46, 49, 52 HP/s
+	return {"max_hp": max_h, "regen": reg}
+
+func get_door_upgrade_cost(kind: String, rank: int) -> int:
+	var kind_idx: int = HATCH_KINDS.find(kind)
+	if kind_idx < 0:
+		kind_idx = 0
+	var global_rank: int = kind_idx * 5 + (rank - 1)
+	return 60 + global_rank * 45 + int(pow(float(global_rank), 1.4) * 15.0)
+
+func can_upgrade_door(room_id: String, actor_id: String = "player") -> Dictionary:
+	if room_owners.get(room_id, "") != actor_id:
+		return {"success": false, "reason": "只能升级自己房间的门"}
+	if is_door_broken(room_id) or get_door_hp(room_id) <= 0:
+		return {"success": false, "reason": "已破不能升"}
+
+	var cur_kind: String = get_door_kind(room_id)
+	var cur_rank: int = get_door_rank(room_id)
+
+	if cur_kind == "ion_gate" and cur_rank >= 5:
+		return {"success": false, "reason": "舱门已达终局封顶 离子栅 V"}
+
+	var next_kind: String = cur_kind
+	var next_rank: int = cur_rank + 1
+	if cur_rank >= 5:
+		var kind_idx: int = HATCH_KINDS.find(cur_kind)
+		if kind_idx + 1 < HATCH_KINDS.size():
+			next_kind = HATCH_KINDS[kind_idx + 1]
+			next_rank = 1
+		else:
+			return {"success": false, "reason": "已达最高等级"}
+
+	var cost: int = get_door_upgrade_cost(cur_kind, cur_rank)
+	if get_actor_money(actor_id) < cost:
+		return {"success": false, "reason": "金钱不足 (需要 %d)" % cost}
+
+	return {
+		"success": true,
+		"next_kind": next_kind,
+		"next_rank": next_rank,
+		"cost_money": cost
+	}
+
+func upgrade_door(room_id: String, actor_id: String = "player") -> bool:
+	var check: Dictionary = can_upgrade_door(room_id, actor_id)
+	if not check.get("success", false):
+		print("舱门升级失败: ", check.get("reason", ""))
+		return false
+
+	var cost: int = check.get("cost_money", 0)
+	if not spend_actor_money(actor_id, cost):
+		return false
+
+	var next_kind: String = check["next_kind"]
+	var next_rank: int = check["next_rank"]
+	door_kind[room_id] = next_kind
+	door_rank[room_id] = next_rank
+
+	var stats: Dictionary = get_hatch_stats(next_kind, next_rank)
+	var old_max: int = door_max_hp.get(room_id, DOOR_MAX_HP)
+	var new_max: int = stats.max_hp
+	door_max_hp[room_id] = new_max
+	door_regen[room_id] = stats.regen
+
+	var old_hp: int = door_hp.get(room_id, old_max)
+	var hp_delta: int = new_max - old_max
+	door_hp[room_id] = min(new_max, old_hp + hp_delta)
+
+	door_hp_changed.emit(room_id, door_hp[room_id], new_max)
+	print("舱门升级成功: %s" % [get_door_display_name(room_id)])
+	return true
+
 func get_door_hp(room_id: String) -> int:
-	return door_hp.get(room_id, DOOR_MAX_HP)
+	return door_hp.get(room_id, get_door_max_hp(room_id))
 
 func is_door_broken(room_id: String) -> bool:
 	return door_broken.get(room_id, false)
 
 func damage_door(room_id: String, damage: int) -> int:
+	var max_h: int = get_door_max_hp(room_id)
 	if not door_hp.has(room_id):
-		door_hp[room_id] = DOOR_MAX_HP
+		door_hp[room_id] = max_h
 	var hp: int = max(0, door_hp[room_id] - damage)
 	door_hp[room_id] = hp
 	if hp <= 0:
 		door_broken[room_id] = true
-	door_hp_changed.emit(room_id, hp, DOOR_MAX_HP)
+	door_hp_changed.emit(room_id, hp, max_h)
 	return hp
 
 func get_starter_hp(room_id: String) -> int:
@@ -681,7 +833,7 @@ func _process(delta: float) -> void:
 			current_phase = Phase.INVADING
 			phase_changed.emit(current_phase)
 
-	# 经济产出（起步矿 + 各级矿 + 化工厂）
+	# 经济产出与舱门回血
 	for r_id in room_owners.keys():
 		var owner: String = room_owners[r_id]
 		if owner == "":
@@ -711,4 +863,19 @@ func _process(delta: float) -> void:
 					if f_inc > 0:
 						add_actor_feedstock(owner, f_inc)
 			building_income_timer[r_id] = b_timer
+
+		# 3. 舱门中段微量回血（未破损状态下自动恢复）
+		if not is_door_broken(r_id) and starter_hp.get(r_id, STARTER_MAX_HP) > 0:
+			var reg_rate: int = get_door_regen_rate(r_id)
+			var max_h: int = get_door_max_hp(r_id)
+			var cur_h: int = get_door_hp(r_id)
+			if reg_rate > 0 and cur_h < max_h:
+				var reg_timer: float = door_regen_timer.get(r_id, 0.0) + delta
+				if reg_timer >= 1.0:
+					reg_timer -= 1.0
+					var healed: int = min(max_h, cur_h + reg_rate)
+					door_hp[r_id] = healed
+					door_hp_changed.emit(r_id, healed, max_h)
+				door_regen_timer[r_id] = reg_timer
+
 
