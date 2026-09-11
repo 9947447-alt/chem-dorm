@@ -130,6 +130,7 @@ func add_xp(amount: int) -> void:
 		invader_xp_to_next = int(round(float(invader_xp_to_next) * 1.35))
 		MatchState.invader_level = invader_level
 		MatchState.invader_level_up.emit(invader_character, invader_level)
+		MatchState.invader_level_changed.emit(invader_level)
 		print("敌人升级！当前等级: %d [%s]" % [invader_level, display_name])
 
 func get_base_attack_damage() -> int:

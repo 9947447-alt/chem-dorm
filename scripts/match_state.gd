@@ -13,6 +13,7 @@ signal door_hp_changed(room_id: String, current_hp: int, max_hp: int)
 signal starter_hp_changed(room_id: String, current_hp: int, max_hp: int)
 signal invader_hp_changed(current_hp: int, max_hp: int)
 signal invader_level_up(character: String, new_level: int)
+signal invader_level_changed(new_level: int)
 
 enum Phase {
 	COUNTDOWN,

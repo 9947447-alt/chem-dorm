@@ -17,6 +17,7 @@ func _ready() -> void:
 	success = success and _test_phase_3_hatch_system()
 	success = success and _test_phase_4_invader_system()
 	success = success and _test_phase_5_ally_and_hightech()
+	success = success and _test_phase_6_hud_and_full_regression()
 	success = success and _test_eject_non_owner_when_room_claimed()
 	success = success and _test_income_generation()
 	success = success and _test_silicic_i_placement_rules()
@@ -971,6 +972,115 @@ func _test_phase_5_ally_and_hightech() -> bool:
 	bot.queue_free()
 	turret.queue_free()
 	grid.queue_free()
+	return true
+
+func _test_phase_6_hud_and_full_regression() -> bool:
+	print("\n[TEST Phase 6] Testing HUD Status Display, Build Bar Interactions, and Full Match Regression...")
+	MatchState.reset_match()
+	var main_scene: MainGame = load("res://scenes/main.tscn").instantiate()
+	add_child(main_scene)
+
+	for r in main_scene.grid_manager.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name)
+
+	var hud = main_scene.hud
+	if hud == null:
+		printerr("FAILED: HUD node not found in main scene")
+		main_scene.queue_free()
+		return false
+
+	# 1. 验证双资源展示
+	MatchState.money = 1234
+	MatchState.chem_feedstock = 56
+	MatchState.money_changed.emit(1234)
+	MatchState.feedstock_changed.emit(56)
+
+	if not hud.label_money.text.contains("1234"):
+		printerr("FAILED: HUD Money label does not reflect 1234: ", hud.label_money.text)
+		main_scene.queue_free()
+		return false
+	if not hud.label_feedstock.text.contains("56"):
+		printerr("FAILED: HUD Feedstock label does not reflect 56: ", hud.label_feedstock.text)
+		main_scene.queue_free()
+		return false
+
+	# 2. 验证玩家占房后舱门与敌人信息展示
+	MatchState.claim_room("room_101", "player")
+	MatchState.player_room_id = "room_101"
+	MatchState.invader_character = "mist_walker"
+	MatchState.invader_level = 3
+	MatchState.invader_level_changed.emit(3)
+	MatchState.door_hp_changed.emit("room_101", 100, 100)
+
+	if not hud.label_door_hp.text.contains("蜂巢闸 I"):
+		printerr("FAILED: HUD Door label does not show door title: ", hud.label_door_hp.text)
+		main_scene.queue_free()
+		return false
+	if not hud.label_invader_hp.text.contains("雾徙") or not hud.label_invader_hp.text.contains("Lv.3"):
+		printerr("FAILED: HUD Invader label mismatch: ", hud.label_invader_hp.text)
+		main_scene.queue_free()
+		return false
+
+	# 3. 验证快捷建造栏交互（切换当前选择）
+	hud._select_build("chem_plant", "化工厂")
+	if main_scene.current_build_selection != "chem_plant":
+		printerr("FAILED: Selecting chem_plant did not update current_build_selection in main_scene")
+		main_scene.queue_free()
+		return false
+
+	# 在房间内部空格建造化工厂
+	var plant_cell := Vector2i(5, 5)
+	if not main_scene.try_build_item(plant_cell, "chem_plant"):
+		printerr("FAILED: Failed to build chem_plant via main_scene.try_build_item")
+		main_scene.queue_free()
+		return false
+	if not MatchState.has_chem_plant("room_101"):
+		printerr("FAILED: Room 101 did not register chem plant")
+		main_scene.queue_free()
+		return false
+
+	# 4. 验证点击升门按钮
+	var old_rank: int = MatchState.get_door_rank("room_101")
+	hud._on_btn_upgrade_door_pressed()
+	if MatchState.get_door_rank("room_101") != old_rank + 1:
+		printerr("FAILED: Door upgrade from HUD button failed!")
+		main_scene.queue_free()
+		return false
+
+	# 5. 验证全场对局胜负规则闭环：
+	# (a) 龟缩高防门不击杀绝不胜
+	MatchState.invader_hp = 200
+	if MatchState.game_result == MatchState.GameResult.VICTORY:
+		printerr("FAILED: Must NOT trigger victory without invader HP reaching 0!")
+		main_scene.queue_free()
+		return false
+
+	# (b) 敌人 HP 归零触发 VICTORY，HUD 显示胜利
+	MatchState.damage_invader(200)
+	if MatchState.game_result != MatchState.GameResult.VICTORY:
+		printerr("FAILED: Expected VICTORY when invader HP reaches 0")
+		main_scene.queue_free()
+		return false
+	if not hud.label_outcome.text.contains("胜利"):
+		printerr("FAILED: HUD Outcome label did not show victory: ", hud.label_outcome.text)
+		main_scene.queue_free()
+		return false
+
+	# (c) 玩家起步矿被破坏触发 DEFEAT，HUD 显示失败
+	MatchState.reset_match()
+	MatchState.claim_room("room_101", "player")
+	MatchState.damage_starter("room_101", MatchState.STARTER_MAX_HP)
+	if MatchState.game_result != MatchState.GameResult.DEFEAT:
+		printerr("FAILED: Expected DEFEAT when starter destroyed")
+		main_scene.queue_free()
+		return false
+	if not hud.label_outcome.text.contains("失败"):
+		printerr("FAILED: HUD Outcome label did not show defeat: ", hud.label_outcome.text)
+		main_scene.queue_free()
+		return false
+
+	print("PASS: Phase 6 verified: Full HUD status, build toolbar selections, door upgrade button, and end-to-end victory/defeat loop.")
+	main_scene.queue_free()
 	return true
 
 
