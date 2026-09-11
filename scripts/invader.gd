@@ -19,7 +19,7 @@ var target_room_id: String = ""
 var attack_timer: float = 0.0
 
 # 敌人角色与等级经验体系
-var invader_character: String = "rock_corroder" # rock_corroder(蚀岩), mist_walker(雾徙), fire_quencher(遏火), oxygen_burster(暴氧)
+var invader_character: String = "" # rock_corroder(蚀岩), mist_walker(雾徙), fire_quencher(遏火), oxygen_burster(暴氧)
 var invader_level: int = 1
 var invader_xp: int = 0
 var invader_xp_to_next: int = 40
@@ -67,12 +67,14 @@ func _ready() -> void:
 	invader_state = InvaderState.WAITING_FOR_SPAWN
 	MatchState.phase_changed.connect(_on_phase_changed)
 	
-	# 四角色抽一个（默认随机，可外部指定）
-	if invader_character == "":
+	# 四角色抽一个（优先继承 MatchState 抽样，未设定则随机抽取）
+	if MatchState.invader_character != "":
+		set_character(MatchState.invader_character)
+	elif invader_character != "":
+		set_character(invader_character)
+	else:
 		var pool: Array[String] = ["rock_corroder", "mist_walker", "fire_quencher", "oxygen_burster"]
 		set_character(pool[randi() % pool.size()])
-	else:
-		set_character(invader_character)
 
 func _on_phase_changed(new_phase: int) -> void:
 	if new_phase == MatchState.Phase.INVADING:
@@ -186,10 +188,17 @@ func _process(delta: float) -> void:
 		if puddle_tick_timer >= 0.5:
 			puddle_tick_timer -= 0.5
 			take_damage(int(round(float(puddle_dps) * 0.5)))
+	elif grid_manager != null and grid_manager.has_acid_puddle_at(current_cell):
+		# 踩入地面酸液水洼实体：持续承受水洼灼烧 DoT
+		puddle_tick_timer += delta
+		if puddle_tick_timer >= 0.5:
+			puddle_tick_timer -= 0.5
+			var p_dps: int = grid_manager.get_acid_puddle_dps(current_cell)
+			take_damage(int(round(float(p_dps) * 0.5)))
 
-	# 检查低血量撤退至走廊回血点
+	# 检查低血量撤退至走廊回血点（全状态生效，包括入室拆起步矿）
 	if MatchState.invader_hp <= int(float(MatchState.INVADER_MAX_HP) * 0.35):
-		if invader_state == InvaderState.STOPPED_AT_DOOR or invader_state == InvaderState.APPROACHING_DOOR:
+		if invader_state == InvaderState.STOPPED_AT_DOOR or invader_state == InvaderState.APPROACHING_DOOR or invader_state == InvaderState.ATTACKING_STARTER or invader_state == InvaderState.ENTERING_ROOM:
 			_retreat_to_heal_pad()
 
 	if invader_state == InvaderState.STOPPED_AT_DOOR:
@@ -204,7 +213,7 @@ func _retreat_to_heal_pad() -> void:
 		return
 	var pad_cell: Vector2i = grid_manager.get_closest_heal_pad_to(current_cell)
 	if pad_cell != Vector2i.ZERO:
-		var path: Array[Vector2i] = grid_manager.get_invader_path_to_cell(current_cell, pad_cell)
+		var path: Array[Vector2i] = grid_manager.get_invader_path_to_heal_pad(current_cell, pad_cell)
 		if not path.is_empty():
 			invader_state = InvaderState.MOVING_TO_HEAL_PAD
 			set_target_path(path)

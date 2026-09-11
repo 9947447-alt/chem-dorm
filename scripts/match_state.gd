@@ -201,6 +201,7 @@ var door_kind: Dictionary = {} # room_id -> String
 var door_rank: Dictionary = {} # room_id -> int
 var door_max_hp: Dictionary = {} # room_id -> int
 var door_regen: Dictionary = {} # room_id -> int
+var door_armor: Dictionary = {} # room_id -> int
 var door_regen_timer: Dictionary = {} # room_id -> float
 
 # V0 对局运行时状态
@@ -241,10 +242,14 @@ func reset_match(countdown_duration: float = 25.0) -> void:
 	door_rank.clear()
 	door_max_hp.clear()
 	door_regen.clear()
+	door_armor.clear()
 	door_regen_timer.clear()
 	invader_hp = INVADER_MAX_HP
 	invader_target_room_id = ""
-	invader_character = "rock_corroder"
+	
+	# 四角色真正随机抽取一个 (rock_corroder, mist_walker, fire_quencher, oxygen_burster)
+	const ROSTER: Array[String] = ["rock_corroder", "mist_walker", "fire_quencher", "oxygen_burster"]
+	invader_character = ROSTER[randi() % ROSTER.size()]
 	invader_level = 1
 	invader_xp = 0
 
@@ -256,6 +261,7 @@ func register_room(room_id: String, display_name: String = "") -> void:
 		door_rank[room_id] = 1
 		door_max_hp[room_id] = DOOR_MAX_HP
 		door_regen[room_id] = 0
+		door_armor[room_id] = 0
 		door_regen_timer[room_id] = 0.0
 		door_hp[room_id] = DOOR_MAX_HP
 		starter_hp[room_id] = STARTER_MAX_HP
@@ -355,6 +361,15 @@ func add_actor_money(actor_id: String, amount: int) -> void:
 		if not actor_resources.has(actor_id):
 			actor_resources[actor_id] = {"money": 0, "feedstock": 0}
 		actor_resources[actor_id]["money"] += amount
+
+func set_actor_money(actor_id: String, amount: int) -> void:
+	if actor_id == "player":
+		money = amount
+		money_changed.emit(money)
+	else:
+		if not actor_resources.has(actor_id):
+			actor_resources[actor_id] = {"money": 0, "feedstock": 0}
+		actor_resources[actor_id]["money"] = amount
 
 func spend_actor_money(actor_id: String, amount: int) -> bool:
 	if actor_id == "player":
@@ -757,28 +772,35 @@ func get_door_display_name(room_id: String) -> String:
 func get_hatch_stats(kind: String, rank: int) -> Dictionary:
 	var max_h: int = 100
 	var reg: int = 0
+	var arm: int = 0
 	match kind:
 		"honeycomb":
 			max_h = 100 + (rank - 1) * 75 # 100..400
 			reg = 0
+			arm = 0
 		"iris":
 			max_h = 500 + (rank - 1) * 150 # 500..1100
 			reg = 0
+			arm = 0
 		"ln2_curtain":
-			# 中段起微量回血
+			# 中段起微量回血与基础护甲
 			max_h = 1400 + (rank - 1) * 350 # 1400..2800
 			reg = 3 + (rank - 1) * 2 # 3, 5, 7, 9, 11 HP/s
+			arm = 8 * rank # 8..40
 		"zeolite_flap":
 			max_h = 3400 + (rank - 1) * 700 # 3400..6200
 			reg = 14 + (rank - 1) * 2 # 14, 16, 18, 20, 22 HP/s
+			arm = 16 * rank # 16..80
 		"lattice_lock":
 			max_h = 7500 + (rank - 1) * 1500 # 7500..13500
 			reg = 25 + (rank - 1) * 3 # 25, 28, 31, 34, 37 HP/s
+			arm = 28 * rank # 28..140
 		"ion_gate":
 			# 终局封顶
 			max_h = 16000 + (rank - 1) * 3500 # 16000..30000
 			reg = 40 + (rank - 1) * 3 # 40, 43, 46, 49, 52 HP/s
-	return {"max_hp": max_h, "regen": reg}
+			arm = 45 * rank # 45..225
+	return {"max_hp": max_h, "regen": reg, "armor": arm}
 
 func get_door_upgrade_cost(kind: String, rank: int) -> int:
 	var kind_idx: int = HATCH_KINDS.find(kind)
@@ -840,6 +862,7 @@ func upgrade_door(room_id: String, actor_id: String = "player") -> bool:
 	var new_max: int = stats.max_hp
 	door_max_hp[room_id] = new_max
 	door_regen[room_id] = stats.regen
+	door_armor[room_id] = stats.armor
 
 	var old_hp: int = door_hp.get(room_id, old_max)
 	var hp_delta: int = new_max - old_max
@@ -852,14 +875,25 @@ func upgrade_door(room_id: String, actor_id: String = "player") -> bool:
 func get_door_hp(room_id: String) -> int:
 	return door_hp.get(room_id, get_door_max_hp(room_id))
 
+func get_door_armor(room_id: String) -> int:
+	return door_armor.get(room_id, 0)
+
+func reduce_door_armor(room_id: String, amount: int) -> int:
+	var cur: int = get_door_armor(room_id)
+	var new_arm: int = max(0, cur - amount)
+	door_armor[room_id] = new_arm
+	return new_arm
+
 func is_door_broken(room_id: String) -> bool:
 	return door_broken.get(room_id, false)
 
-func damage_door(room_id: String, damage: int) -> int:
+func damage_door(room_id: String, damage: int, ignore_armor: bool = false) -> int:
 	var max_h: int = get_door_max_hp(room_id)
 	if not door_hp.has(room_id):
 		door_hp[room_id] = max_h
-	var hp: int = max(0, door_hp[room_id] - damage)
+	var arm: int = 0 if ignore_armor else get_door_armor(room_id)
+	var eff_dmg: int = max(1, damage - arm)
+	var hp: int = max(0, door_hp[room_id] - eff_dmg)
 	door_hp[room_id] = hp
 	if hp <= 0:
 		door_broken[room_id] = true

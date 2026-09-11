@@ -21,8 +21,20 @@ signal upgrade_turret_requested
 @onready var btn_build_arm: Button = $BottomBar/Margin/HBox/BtnBuildArm
 @onready var btn_build_regulator: Button = $BottomBar/Margin/HBox/BtnBuildRegulator
 @onready var btn_upgrade_turret: Button = $BottomBar/Margin/HBox/BtnUpgradeTurret
+@onready var btn_toggle_branch: Button = $BottomBar/Margin/HBox/BtnToggleBranch
 @onready var label_selected: Label = $BottomBar/Margin/HBox/SelectedLabel
 
+const MINES: Array[Dictionary] = [
+	{"id": "iron_mine", "name": "铁矿", "cost": 60},
+	{"id": "tungsten_mine", "name": "钨矿", "cost": 160},
+	{"id": "molybdenum_mine", "name": "钼矿", "cost": 360},
+	{"id": "sulfur_mine", "name": "硫矿", "cost": 800},
+	{"id": "antimony_mine", "name": "锑矿", "cost": 1800},
+	{"id": "gold_mine", "name": "金矿", "cost": 4000},
+	{"id": "uranium_mine", "name": "铀矿", "cost": 10000},
+]
+var current_mine_idx: int = 0
+var selected_branch_line: String = "line_a"
 var current_selection: String = "turret"
 
 func _ready() -> void:
@@ -39,25 +51,43 @@ func _ready() -> void:
 
 	btn_upgrade_door.pressed.connect(_on_btn_upgrade_door_pressed)
 	btn_build_turret.pressed.connect(func(): _select_build("turret", "硅酸炮台"))
-	btn_build_iron_mine.pressed.connect(func(): _select_build("iron_mine", "铁矿"))
+	btn_build_iron_mine.pressed.connect(_on_btn_cycle_mine_pressed)
 	btn_build_chem_plant.pressed.connect(func(): _select_build("chem_plant", "化工厂"))
 	btn_build_catalytic.pressed.connect(func(): _select_build("catalytic_column", "催化柱"))
 	btn_build_focus.pressed.connect(func(): _select_build("focus_lens", "聚焦镜"))
 	btn_build_arm.pressed.connect(func(): _select_build("robotic_arm", "机械臂"))
 	btn_build_regulator.pressed.connect(func(): _select_build("regulator_stack", "稳压堆"))
 	btn_upgrade_turret.pressed.connect(_on_btn_upgrade_turret_pressed)
+	btn_toggle_branch.pressed.connect(_on_btn_toggle_branch_pressed)
 
 	_update_hud_display()
+
+func _on_btn_cycle_mine_pressed() -> void:
+	if current_selection == MINES[current_mine_idx]["id"]:
+		current_mine_idx = (current_mine_idx + 1) % MINES.size()
+	var mine: Dictionary = MINES[current_mine_idx]
+	btn_build_iron_mine.text = "[3] %s ($%d)" % [mine["name"], mine["cost"]]
+	_select_build(mine["id"], "%s ($%d)" % [mine["name"], mine["cost"]])
+
+func _on_btn_toggle_branch_pressed() -> void:
+	if selected_branch_line == "line_a":
+		selected_branch_line = "line_b"
+		btn_toggle_branch.text = "[0] 分支: B线 (盐酸)"
+	else:
+		selected_branch_line = "line_a"
+		btn_toggle_branch.text = "[0] 分支: A线 (次氯)"
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
+			KEY_0:
+				_on_btn_toggle_branch_pressed()
 			KEY_1:
 				_on_btn_upgrade_door_pressed()
 			KEY_2:
 				_select_build("turret", "硅酸炮台")
 			KEY_3:
-				_select_build("iron_mine", "铁矿")
+				_on_btn_cycle_mine_pressed()
 			KEY_4:
 				_select_build("chem_plant", "化工厂")
 			KEY_5:

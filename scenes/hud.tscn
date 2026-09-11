@@ -106,6 +106,10 @@ text = "[8] 稳压堆 ($2000)"
 layout_mode = 2
 text = "[9] 升级炮台"
 
+[node name="BtnToggleBranch" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[0] 分支: A线 (次氯)"
+
 [node name="SelectedLabel" type="Label" parent="BottomBar/Margin/HBox"]
 layout_mode = 2
 text = "当前选择: 硅酸炮台"

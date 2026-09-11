@@ -2,7 +2,7 @@ class_name GridMapManager
 extends Node2D
 
 const TILE_SIZE: int = 32
-const GRID_WIDTH: int = 38
+const GRID_WIDTH: int = 42
 const GRID_HEIGHT: int = 28
 
 enum CellType {
@@ -20,8 +20,9 @@ var rooms: Array[RoomData] = []
 var room_by_id: Dictionary = {} # String -> RoomData
 var room_by_door: Dictionary = {} # Vector2i -> RoomData
 var invader_spawn_cell: Vector2i = Vector2i(1, 13)
-var heal_pad_cells: Array[Vector2i] = [Vector2i(2, 14), Vector2i(35, 14)] # 走廊偏僻回血点
+var heal_pad_cells: Array[Vector2i] = [Vector2i(39, 13), Vector2i(39, 14)] # 走廊偏僻回血点（远离全部门，超出默认炮台射程）
 var corridor_cells: Array[Vector2i] = []
+var acid_puddles: Dictionary = {} # Vector2i -> Dictionary { "timer": float, "dps": int }
 
 var astar_full: AStarGrid2D
 var astar_corridor: AStarGrid2D
@@ -34,6 +35,33 @@ func _ready() -> void:
 	if not MatchState.building_added.is_connected(_on_building_added):
 		MatchState.building_added.connect(_on_building_added)
 	queue_redraw()
+
+func _process(delta: float) -> void:
+	if not acid_puddles.is_empty():
+		var expired: Array = []
+		for c in acid_puddles.keys():
+			acid_puddles[c]["timer"] -= delta
+			if acid_puddles[c]["timer"] <= 0.0:
+				expired.append(c)
+		if not expired.is_empty():
+			for c in expired:
+				acid_puddles.erase(c)
+			queue_redraw()
+
+func spawn_acid_puddle(cell: Vector2i, duration: float, dps: int) -> void:
+	acid_puddles[cell] = {
+		"timer": duration,
+		"dps": dps
+	}
+	queue_redraw()
+
+func has_acid_puddle_at(cell: Vector2i) -> bool:
+	return acid_puddles.has(cell)
+
+func get_acid_puddle_dps(cell: Vector2i) -> int:
+	if acid_puddles.has(cell):
+		return acid_puddles[cell].get("dps", 0)
+	return 0
 
 func _on_building_added(_room_id: String, _building_data: Dictionary) -> void:
 	queue_redraw()
@@ -125,8 +153,8 @@ func _build_grid() -> void:
 		for y in range(GRID_HEIGHT):
 			cells[Vector2i(x, y)] = CellType.VOID
 
-	# 2. Build Corridor (Y = 13..14, X = 1..35)
-	for x in range(1, 36):
+	# 2. Build Corridor (Y = 13..14, X = 1..40)
+	for x in range(1, 41):
 		for y in [13, 14]:
 			var cell := Vector2i(x, y)
 			cells[cell] = CellType.CORRIDOR
@@ -165,7 +193,7 @@ func _build_grid() -> void:
 		cells[r.door_cell] = CellType.DOOR
 
 	# 4. Corridor Boundary Walls
-	for x in range(0, 37):
+	for x in range(0, 42):
 		# North wall of corridor
 		var n_cell := Vector2i(x, 12)
 		if cells.get(n_cell, CellType.VOID) == CellType.VOID:
@@ -179,8 +207,8 @@ func _build_grid() -> void:
 	# Corridor West & East walls
 	cells[Vector2i(0, 13)] = CellType.WALL
 	cells[Vector2i(0, 14)] = CellType.WALL
-	cells[Vector2i(36, 13)] = CellType.WALL
-	cells[Vector2i(36, 14)] = CellType.WALL
+	cells[Vector2i(41, 13)] = CellType.WALL
+	cells[Vector2i(41, 14)] = CellType.WALL
 
 func _init_astar() -> void:
 	# General AStar
@@ -260,6 +288,19 @@ func get_invader_path_to_cell(from_cell: Vector2i, to_cell: Vector2i) -> Array[V
 	# Invader moves purely along corridor
 	var raw_path: Array[Vector2i] = astar_corridor.get_id_path(from_cell, to_cell)
 	return raw_path
+
+func get_invader_path_to_heal_pad(from_cell: Vector2i, pad_cell: Vector2i) -> Array[Vector2i]:
+	var room := get_room_at_cell(from_cell)
+	if room != null:
+		if MatchState.is_door_broken(room.room_id):
+			astar_full.set_point_solid(room.door_cell, false)
+		astar_full.set_point_solid(from_cell, false)
+		return astar_full.get_id_path(from_cell, pad_cell)
+	else:
+		return astar_corridor.get_id_path(from_cell, pad_cell)
+
+func is_corridor_cell(cell: Vector2i) -> bool:
+	return cells.has(cell) and cells[cell] == CellType.CORRIDOR
 
 func get_invader_path_to_starter(from_cell: Vector2i, room: RoomData) -> Array[Vector2i]:
 	if not MatchState.is_door_broken(room.room_id):
@@ -442,4 +483,18 @@ func _draw() -> void:
 		draw_rect(b_rect, b_color)
 		draw_rect(b_rect, b_color.lightened(0.3), false, 1.5)
 		draw_string(font, Vector2(b_cell.x * TILE_SIZE + 4, b_cell.y * TILE_SIZE + TILE_SIZE - 8), b_sym, HORIZONTAL_ALIGNMENT_CENTER, TILE_SIZE - 8, 11, Color.WHITE)
+
+	# 绘制地面酸液水洼（氢硫酸特效）
+	for p_cell in acid_puddles.keys():
+		var p_rect := Rect2(p_cell.x * TILE_SIZE + 2, p_cell.y * TILE_SIZE + 2, TILE_SIZE - 4, TILE_SIZE - 4)
+		draw_rect(p_rect, Color(0.85, 0.8, 0.15, 0.5))
+		draw_rect(p_rect, Color(1.0, 0.95, 0.2, 0.9), false, 2.0)
+		draw_string(font, Vector2(p_cell.x * TILE_SIZE + 6, p_cell.y * TILE_SIZE + TILE_SIZE - 10), "沼", HORIZONTAL_ALIGNMENT_CENTER, TILE_SIZE - 12, 10, Color.BLACK)
+
+	# 绘制走廊偏僻回血台
+	for pad in heal_pad_cells:
+		var pad_rect := Rect2(pad.x * TILE_SIZE + 2, pad.y * TILE_SIZE + 2, TILE_SIZE - 4, TILE_SIZE - 4)
+		draw_rect(pad_rect, Color(0.1, 0.6, 0.3, 0.35))
+		draw_rect(pad_rect, Color(0.2, 0.95, 0.4, 0.8), false, 2.0)
+		draw_string(font, Vector2(pad.x * TILE_SIZE + 4, pad.y * TILE_SIZE + TILE_SIZE - 8), "+", HORIZONTAL_ALIGNMENT_CENTER, TILE_SIZE - 8, 14, Color.GREEN)
 

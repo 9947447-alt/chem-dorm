@@ -179,11 +179,12 @@ func _upgrade_turret_at(cell: Vector2i) -> void:
 		MatchState.upgrade_turret(t)
 		return
 	if t.substance == "carbonate" and t.rank == 5 and t.branch_line == "":
-		var line_a_check := MatchState.can_upgrade_turret(t, "line_a")
-		if line_a_check.get("success", false):
-			MatchState.upgrade_turret(t, "line_a")
+		var target_branch: String = hud.selected_branch_line if hud != null else "line_a"
+		var branch_check := MatchState.can_upgrade_turret(t, target_branch)
+		if branch_check.get("success", false):
+			MatchState.upgrade_turret(t, target_branch)
 		else:
-			print("换线失败: ", line_a_check.get("reason", ""))
+			print("换线失败: ", branch_check.get("reason", ""))
 
 func _try_upgrade_player_turret() -> void:
 	var p_room_id: String = MatchState.get_player_owned_room_id()

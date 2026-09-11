@@ -211,18 +211,18 @@ func _think_and_build() -> void:
 		# 相邻催化柱或聚焦镜
 		for t in my_turrets:
 			var neighbors := [
-				t.cell + Vector2i(1, 0),
-				t.cell + Vector2i(-1, 0),
-				t.cell + Vector2i(0, 1),
-				t.cell + Vector2i(0, -1)
+				t.grid_cell + Vector2i(1, 0),
+				t.grid_cell + Vector2i(-1, 0),
+				t.grid_cell + Vector2i(0, 1),
+				t.grid_cell + Vector2i(0, -1)
 			]
 			for n in neighbors:
 				if empty_cells.has(n):
-					if money >= 800 and not MatchState.has_adjacent_high_tech(t.cell, "catalytic_column"):
+					if money >= 800 and not MatchState.has_adjacent_high_tech(t.grid_cell, "catalytic_column"):
 						empty_cells.erase(n)
 						if MatchState.buy_and_place_building(target_room_id, "catalytic_column", actor_id, n):
 							return
-					elif money >= 600 and not MatchState.has_adjacent_high_tech(t.cell, "focus_lens"):
+					elif money >= 600 and not MatchState.has_adjacent_high_tech(t.grid_cell, "focus_lens"):
 						empty_cells.erase(n)
 						if MatchState.buy_and_place_building(target_room_id, "focus_lens", actor_id, n):
 							return

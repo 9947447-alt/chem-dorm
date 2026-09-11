@@ -2,6 +2,7 @@ class_name SilicicTurret
 extends Node2D
 
 var grid_cell: Vector2i = Vector2i.ZERO
+var grid_manager: GridMapManager = null
 var fire_timer: float = 0.0
 var target_invader: InvaderActor = null
 var laser_visible_timer: float = 0.0
@@ -37,8 +38,9 @@ func set_range_reduction(reduction: float) -> void:
 func init_turret(cell: Vector2i, invader: InvaderActor, grid: GridMapManager) -> void:
 	grid_cell = cell
 	target_invader = invader
+	grid_manager = grid
 	position = grid.cell_to_world(cell)
-	
+
 	var r: RoomData = grid.get_room_at_cell(cell)
 	if r != null:
 		room_id = r.room_id
@@ -87,6 +89,10 @@ func _process(delta: float) -> void:
 		eff_interval *= 0.85
 
 	if dist <= range_px:
+		if not _can_shoot_target(target_invader):
+			fire_timer = 0.0
+			return
+
 		if substance == "perchloric":
 			if hitch_timer > 0.0:
 				hitch_timer -= delta
@@ -107,6 +113,46 @@ func _process(delta: float) -> void:
 	else:
 		fire_timer = 0.0
 
+func _can_shoot_target(invader: InvaderActor) -> bool:
+	if invader == null or not is_instance_valid(invader):
+		return false
+	if not invader.is_alive() or not invader.visible:
+		return false
+
+	# 魔酸（氟锑酸）具有超强穿透性，能隔门穿透直击走廊内任意目标
+	if substance == "fluoroantimonic":
+		return true
+
+	if grid_manager == null:
+		return true
+
+	var my_room: RoomData = grid_manager.get_room_by_id(room_id)
+	if my_room == null:
+		my_room = grid_manager.get_room_at_cell(grid_cell)
+	if my_room == null:
+		return true
+
+	var target_cell: Vector2i = invader.current_cell
+
+	# 目标在同房间内部，内部视野完全通畅
+	if my_room.is_cell_interior(target_cell):
+		return true
+
+	# 目标在攻击本房间舱门（正处于门外格或门口格）
+	if target_cell == my_room.door_exterior_cell or target_cell == my_room.door_cell:
+		return true
+
+	# 目标在外部其他格子（走廊深处、其他房间）：
+	# 普通炮台受防爆合金门阻隔，只有在门已被打破开启时才能透过门口射向走廊
+	if not MatchState.is_door_broken(my_room.room_id):
+		return false
+
+	# 门已破，且目标在走廊
+	if grid_manager.is_corridor_cell(target_cell):
+		return true
+
+	return false
+
 func _fire_at_invader() -> void:
 	if target_invader == null or not is_instance_valid(target_invader):
 		return
@@ -119,10 +165,16 @@ func _fire_at_invader() -> void:
 			# 减缓破门速度
 			target_invader.apply_slow_break(2.0)
 		"hydrosulfuric":
-			# 地面水洼 DoT 灼烧
-			target_invader.apply_puddle(3.0, 40)
+			# 地面水洼 DoT 灼烧：在敌人当前格生成真实地表酸液水洼实体
+			if grid_manager != null:
+				grid_manager.spawn_acid_puddle(target_invader.current_cell, 4.0, 45)
+			target_invader.apply_puddle(4.0, 45)
 		"hydrofluoric":
-			# 对破门状态下的敌人附加护甲撕裂伤害
+			# 破门破甲 (Extra vs hatch armor):
+			# 1. 永久溶蚀削减舱门的装甲值
+			if room_id != "":
+				MatchState.reduce_door_armor(room_id, 10)
+			# 2. 对破门状态下的敌人附加破甲增伤
 			if target_invader.invader_state == InvaderActor.InvaderState.STOPPED_AT_DOOR:
 				final_dmg = int(round(float(final_dmg) * 1.6))
 		"sulfuric":

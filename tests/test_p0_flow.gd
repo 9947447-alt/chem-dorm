@@ -492,7 +492,11 @@ func _test_phase_2_acid_tree() -> bool:
 		grid.queue_free()
 		return false
 
-	# 5. 验证特效：次氯酸减缓破门速度
+	# 5. 验证特效（重置敌人充足生命值以承受各武器特效测试）
+	MatchState.invader_hp = 10000
+	invader.invader_state = InvaderActor.InvaderState.STOPPED_AT_DOOR
+
+	# 验证特效 1：次氯酸减缓破门速度
 	turret._fire_at_invader()
 	if invader.slow_break_timer <= 0.0:
 		printerr("FAILED: Hypochlorous did not apply slow_break_timer")
@@ -500,7 +504,75 @@ func _test_phase_2_acid_tree() -> bool:
 		grid.queue_free()
 		return false
 
-	# 验证特效：硫酸剥离抗性
+	# 验证特效 2：氢硫酸地面水洼 DoT（真实地表水洼实体与走开停扣）
+	var turret_hydro := SilicicTurret.new()
+	grid.add_turret(Vector2i(6, 7), turret_hydro)
+	turret_hydro.init_turret(Vector2i(6, 7), invader, grid)
+	turret_hydro.substance = "hydrosulfuric"
+	turret_hydro.rank = 1
+	turret_hydro.branch_line = "line_a"
+	turret_hydro.apply_stats()
+	var prev_inv_hp: int = MatchState.invader_hp
+	turret_hydro._fire_at_invader()
+	if not grid.has_acid_puddle_at(invader.current_cell):
+		printerr("FAILED: Hydrosulfuric did not spawn acid puddle on grid cell!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if grid.get_acid_puddle_dps(invader.current_cell) <= 0:
+		printerr("FAILED: Acid puddle DPS must be > 0")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	# 敌人站在水洼格子上受 DoT
+	invader.puddle_timer = 0.0 # 清空单体 timer，验证真实地表水洼结算
+	var hp_before_puddle: int = MatchState.invader_hp
+	invader._process(0.55)
+	if MatchState.invader_hp >= hp_before_puddle:
+		printerr("FAILED: Invader standing on acid puddle cell did not take puddle DoT damage!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	# 敌人移开水洼格子后不再受水洼 DoT
+	invader.current_cell = Vector2i(20, 13)
+	var hp_moved: int = MatchState.invader_hp
+	invader._process(0.55)
+	if MatchState.invader_hp != hp_moved:
+		printerr("FAILED: Invader should NOT take puddle damage after stepping off the puddle cell!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	invader.current_cell = Vector2i(6, 13) # 移回门外
+
+	# 验证特效 3：氢氟酸额外破舱门装甲 / 破甲 (Extra vs hatch armor)
+	MatchState.door_kind["room_101"] = "ion_gate"
+	MatchState.door_rank["room_101"] = 5
+	MatchState.door_armor["room_101"] = 225
+	var turret_hf := SilicicTurret.new()
+	grid.add_turret(Vector2i(5, 6), turret_hf)
+	turret_hf.init_turret(Vector2i(5, 6), invader, grid)
+	turret_hf.substance = "hydrofluoric"
+	turret_hf.rank = 1
+	turret_hf.branch_line = "line_a"
+	turret_hf.room_id = "room_101"
+	turret_hf.apply_stats()
+	var initial_door_armor: int = MatchState.get_door_armor("room_101")
+	turret_hf._fire_at_invader()
+	if MatchState.get_door_armor("room_101") >= initial_door_armor:
+		printerr("FAILED: Hydrofluoric did not corrode/reduce door armor!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 验证特效 4：盐酸长射程高射速 (Range 7.5, Interval 0.35)
+	var stats_hcl: Dictionary = MatchState.get_turret_stats("hydrochloric", 1)
+	if stats_hcl["range"] < 7.0 or stats_hcl["interval"] > 0.4:
+		printerr("FAILED: Hydrochloric stats mismatch, expected high rate and long range, got: ", stats_hcl)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 验证特效 5：硫酸剥离抗性 (Strip resist 1.3x damage)
 	var turret_sulfuric := SilicicTurret.new()
 	grid.add_turret(Vector2i(5, 7), turret_sulfuric)
 	turret_sulfuric.init_turret(Vector2i(5, 7), invader, grid)
@@ -515,22 +587,76 @@ func _test_phase_2_acid_tree() -> bool:
 		grid.queue_free()
 		return false
 
-	# 验证特效：氢硫酸水洼 DoT
-	var turret_hydro := SilicicTurret.new()
-	grid.add_turret(Vector2i(6, 7), turret_hydro)
-	turret_hydro.init_turret(Vector2i(6, 7), invader, grid)
-	turret_hydro.substance = "hydrosulfuric"
-	turret_hydro.rank = 1
-	turret_hydro.branch_line = "line_a"
-	turret_hydro.apply_stats()
-	turret_hydro._fire_at_invader()
-	if invader.puddle_timer <= 0.0:
-		printerr("FAILED: Hydrosulfuric did not apply puddle_timer")
+	# 验证特效 6：高氯酸连射硬直 (Burst 3 then hitch)
+	var turret_perchloric := SilicicTurret.new()
+	grid.add_turret(Vector2i(6, 11), turret_perchloric)
+	turret_perchloric.init_turret(Vector2i(6, 11), invader, grid)
+	turret_perchloric.substance = "perchloric"
+	turret_perchloric.rank = 1
+	turret_perchloric.branch_line = "line_b"
+	turret_perchloric.apply_stats()
+	for b in range(3):
+		turret_perchloric._process(0.15)
+	if turret_perchloric.hitch_timer <= 0.0:
+		printerr("FAILED: Perchloric did not trigger hitch after burst!")
 		invader.queue_free()
 		grid.queue_free()
 		return false
 
-	print("PASS: Phase 2 acid tree verified: Stepwise upgrades, capstone titles, no-plant branch lock, branch irreversibility, and branch specials.")
+	# 验证特效 7：氟锑酸隔门穿透直击 (Pierce through hatch to the invader)
+	MatchState.door_broken["room_101"] = false # 确保本房间舱门完好闭锁
+	invader.current_cell = Vector2i(10, 13) # 敌人位于走廊深处（不在门外格）
+	invader.global_position = grid.cell_to_world(invader.current_cell)
+	var normal_turret := SilicicTurret.new()
+	grid.add_turret(Vector2i(4, 4), normal_turret)
+	normal_turret.init_turret(Vector2i(4, 4), invader, grid)
+	normal_turret.turret_range = 10.0 # 给予足够射程
+	if normal_turret._can_shoot_target(invader):
+		printerr("FAILED: Normal turret should be BLOCKED by closed door when target is in deep corridor!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	var turret_fa := SilicicTurret.new()
+	grid.add_turret(Vector2i(4, 5), turret_fa)
+	turret_fa.init_turret(Vector2i(4, 5), invader, grid)
+	turret_fa.substance = "fluoroantimonic"
+	turret_fa.rank = 5
+	turret_fa.branch_line = "line_b"
+	turret_fa.apply_stats()
+	turret_fa.turret_range = 10.0
+	if not turret_fa._can_shoot_target(invader):
+		printerr("FAILED: Fluoroantimonic turret must PIERCE through closed hatch to hit invader!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	var hp_before_fa: int = MatchState.invader_hp
+	turret_fa._fire_at_invader()
+	if MatchState.invader_hp >= hp_before_fa:
+		printerr("FAILED: Fluoroantimonic failed to damage invader through closed hatch!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 6. 验证 Line B 分支完整逐步升级链：盐酸 I-V -> 硫酸 I-V -> 高氯酸 I-V -> 氟锑酸 I-V
+	var turret_line_b := SilicicTurret.new()
+	grid.add_turret(Vector2i(3, 5), turret_line_b)
+	turret_line_b.init_turret(Vector2i(3, 5), invader, grid)
+	turret_line_b.substance = "carbonate"
+	turret_line_b.rank = 5
+	turret_line_b.branch_line = ""
+	if not MatchState.upgrade_turret(turret_line_b, "line_b"):
+		printerr("FAILED: Branching into Line B failed!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if turret_line_b.substance != "hydrochloric" or turret_line_b.rank != 1 or turret_line_b.branch_line != "line_b":
+		printerr("FAILED: Expected hydrochloric I line_b, got: %s %d %s" % [turret_line_b.substance, turret_line_b.rank, turret_line_b.branch_line])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	print("PASS: Phase 2 acid tree verified: Stepwise upgrades, capstone titles, no-plant branch lock, branch irreversibility, Line B progression, and all 7 branch specials.")
 	invader.queue_free()
 	grid.queue_free()
 	return true
@@ -581,8 +707,8 @@ func _test_phase_3_hatch_system() -> bool:
 		grid.queue_free()
 		return false
 
-	# 受到伤害后自动回血
-	MatchState.damage_door("room_101", 100)
+	# 受到伤害后自动回血（注意减免装甲后的有效伤害，确保未被最大生命上限截断）
+	MatchState.damage_door("room_101", 1000)
 	var damaged_hp: int = MatchState.get_door_hp("room_101")
 	MatchState._process(1.0) # 心跳 1 秒回血
 	if MatchState.get_door_hp("room_101") != damaged_hp + regen_rate:
@@ -602,11 +728,14 @@ func _test_phase_3_hatch_system() -> bool:
 		grid.queue_free()
 		return false
 
-	# 5. 验证 15 级拆速净 DPS > 离子栅 V 回血率（门升到顶不能单靠门耗死 15 级）
-	var lv15_attack_dps: float = 200.0 # 15 级标准基准拆速 (200 DPS)
+	# 5. 验证 15 级拆速净 DPS > 离子栅 V 回血率（门升到顶不能单靠门耗死 15 级，取真实战斗配置）
+	var sample_invader := InvaderActor.new()
+	sample_invader.invader_level = 15
+	var lv15_attack_dps: float = float(sample_invader.get_base_attack_damage()) / sample_invader.get_base_attack_interval()
+	sample_invader.queue_free()
 	var max_gate_regen: float = float(regen_rate) # 52 HP/s
 	if lv15_attack_dps <= max_gate_regen:
-		printerr("FAILED: Level 15 break DPS must strictly exceed Ion gate V regen rate!")
+		printerr("FAILED: Level 15 break DPS must strictly exceed Ion gate V regen rate! DPS: %f regen: %f" % [lv15_attack_dps, max_gate_regen])
 		grid.queue_free()
 		return false
 
@@ -630,13 +759,43 @@ func _test_phase_4_invader_system() -> bool:
 	add_child(grid)
 	grid._ready()
 
+	# 0. 验证四角色真正随机抽取一个（抽样 40 次必须涵盖 4 种角色）
+	var sampled_chars: Dictionary = {}
+	for i in range(40):
+		MatchState.reset_match()
+		sampled_chars[MatchState.invader_character] = true
+	if sampled_chars.size() < 4:
+		printerr("FAILED: Four invader characters not truly sampled randomly! Got: ", sampled_chars.keys())
+		grid.queue_free()
+		return false
+
+	MatchState.reset_match()
+	for r in grid.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name)
 	MatchState.claim_room("room_101", "player")
 
 	var invader := InvaderActor.new()
 	add_child(invader)
 	invader.init_actor("invader", "入侵者", Color.RED, grid.invader_spawn_cell, grid)
 
-	# 1. 验证跑路时不涨经验
+	# 1. 验证走廊偏僻回血点（远离全部门，且超出默认炮台射程 4.0 与聚焦镜 5.0）
+	for pad in grid.heal_pad_cells:
+		for r in grid.get_all_rooms():
+			var dist_door: int = abs(pad.x - r.door_exterior_cell.x) + abs(pad.y - r.door_exterior_cell.y)
+			if dist_door < 10:
+				printerr("FAILED: Heal pad %s too close to room %s door exterior (Manhattan: %d < 10)" % [pad, r.room_id, dist_door])
+				invader.queue_free()
+				grid.queue_free()
+				return false
+			for ic in r.get_interior_cells():
+				var dist_tile: float = Vector2(pad).distance_to(Vector2(ic))
+				if dist_tile < 6.0:
+					printerr("FAILED: Heal pad %s within turret range of interior cell %s (dist: %f < 6.0)" % [pad, ic, dist_tile])
+					invader.queue_free()
+					grid.queue_free()
+					return false
+
+	# 2. 验证跑路时不涨经验
 	invader.set_character("rock_corroder")
 	invader.spawn_invader()
 	if invader.is_moving:
@@ -659,7 +818,7 @@ func _test_phase_4_invader_system() -> bool:
 		grid.queue_free()
 		return false
 
-	# 2. 验证打门才涨经验
+	# 3. 验证打门才涨经验
 	var prev_xp: int = invader.invader_xp
 	invader._process(invader.get_base_attack_interval() + 0.05)
 	if invader.invader_xp <= prev_xp:
@@ -668,54 +827,133 @@ func _test_phase_4_invader_system() -> bool:
 		grid.queue_free()
 		return false
 
-	# 3. 验证技能未到级不能用 (以蚀岩为例: 4级无斩击加成，10级才加成)
+	# 4. 验证四角色战斗技能真实调用与门控（不手算伪造）
+	# (A) 蚀岩 (rock_corroder): 真实测试 Lv 4 vs Lv 5 克制回血 vs Lv 10 斩击
+	invader.set_character("rock_corroder")
+	MatchState.door_hp["room_101"] = 10000
+	MatchState.door_armor["room_101"] = 0
+	MatchState.door_regen["room_101"] = 25
+
+	# Lv 4: 基础伤害 56
 	invader.invader_level = 4
-	var dmg_lv4: int = invader.get_base_attack_damage() # 4级基础 56
-	if dmg_lv4 != 56:
-		printerr("FAILED: Expected level 4 pressure damage 56, got: ", dmg_lv4)
+	invader.invader_xp = 0
+	invader.invader_xp_to_next = 99999
+	var hp_before_atk: int = MatchState.get_door_hp("room_101")
+	invader.attack_timer = 0.0
+	invader._process_attacking_door(invader.get_base_attack_interval() + 0.01)
+	var dmg_taken_lv4: int = hp_before_atk - MatchState.get_door_hp("room_101")
+	if dmg_taken_lv4 != 56:
+		printerr("FAILED: Rock corroder Lv 4 actual damage mismatch, expected 56 got: ", dmg_taken_lv4)
 		invader.queue_free()
 		grid.queue_free()
 		return false
 
-	# 提升到 10 级后触发斩击加成 (1.5x)
+	# Lv 5: 基础伤害 60，增加抵消回血量 (60 + 25 = 85)
+	invader.invader_level = 5
+	invader.invader_xp = 0
+	invader.invader_xp_to_next = 99999
+	hp_before_atk = MatchState.get_door_hp("room_101")
+	invader.attack_timer = 0.0
+	invader._process_attacking_door(invader.get_base_attack_interval() + 0.01)
+	var dmg_taken_lv5: int = hp_before_atk - MatchState.get_door_hp("room_101")
+	if dmg_taken_lv5 != (60 + 25):
+		printerr("FAILED: Rock corroder Lv 5 regen counter damage mismatch, expected 85 got: ", dmg_taken_lv5)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# Lv 10: 斩击 1.5x (基础 120 + 25 = 145 -> 1.5x = 218)
 	invader.invader_level = 10
-	var base_lv10: int = invader.get_base_attack_damage()
-	var expected_lv10_cut: int = int(round(float(base_lv10) * 1.5))
-	if expected_lv10_cut <= base_lv10:
-		printerr("FAILED: Lv 10 skill should boost damage by 1.5x")
+	invader.invader_xp = 0
+	invader.invader_xp_to_next = 99999
+	hp_before_atk = MatchState.get_door_hp("room_101")
+	invader.attack_timer = 0.0
+	invader._process_attacking_door(invader.get_base_attack_interval() + 0.01)
+	var dmg_taken_lv10: int = hp_before_atk - MatchState.get_door_hp("room_101")
+	var expected_cut: int = int(round(float(120 + 25) * 1.5))
+	if dmg_taken_lv10 != expected_cut:
+		printerr("FAILED: Rock corroder Lv 10 actual cut damage mismatch, expected %d got: %d" % [expected_cut, dmg_taken_lv10])
 		invader.queue_free()
 		grid.queue_free()
 		return false
 
-	# 4. 验证暴氧技能未到级不能用与 15 级离子栅 V 特攻
-	MatchState.door_hp["room_101"] = 1000
-	MatchState.door_broken["room_101"] = false
-	invader.target_room_id = "room_101"
-	invader.invader_state = InvaderActor.InvaderState.STOPPED_AT_DOOR
-	invader.set_character("oxygen_burster")
-	invader.invader_level = 7
-	# 7级无自僵直
+	# (B) 雾徙 (mist_walker): Lv 5 迷雾减速炮台，Lv 12 换门
+	var test_turret := SilicicTurret.new()
+	grid.add_turret(Vector2i(5, 5), test_turret)
+	test_turret.init_turret(Vector2i(5, 5), invader, grid)
+	test_turret.room_id = "room_101"
+
+	invader.set_character("mist_walker")
+	invader.invader_level = 5
 	invader.skill_cooldown_timer = 0.0
 	invader.attack_timer = 0.0
-	invader._process_attacking_door(invader.get_base_attack_interval() + 0.05)
+	invader._process_attacking_door(invader.get_base_attack_interval() + 0.01)
+	if test_turret.fog_slow_timer <= 0.0:
+		printerr("FAILED: Mist walker Lv 5 did not apply fog slow to turret!")
+		invader.queue_free()
+		test_turret.queue_free()
+		grid.queue_free()
+		return false
+
+	invader.invader_level = 12
+	invader.has_retargeted_at_12 = false
+	invader.attack_timer = 0.0
+	invader._process_attacking_door(invader.get_base_attack_interval() + 0.01)
+	if invader.target_room_id == "room_101":
+		printerr("FAILED: Mist walker Lv 12 did not retarget to alternate room!")
+		invader.queue_free()
+		test_turret.queue_free()
+		grid.queue_free()
+		return false
+	invader.target_room_id = "room_101" # 恢复目标
+
+	# (C) 遏火 (fire_quencher): Lv 6 沉默炮台，Lv 12 削弱射程
+	invader.set_character("fire_quencher")
+	invader.invader_level = 6
+	invader.skill_cooldown_timer = 0.0
+	invader.attack_timer = 0.0
+	invader._process_attacking_door(invader.get_base_attack_interval() + 0.01)
+	if test_turret.silence_timer <= 0.0:
+		printerr("FAILED: Fire quencher Lv 6 did not silence turret!")
+		invader.queue_free()
+		test_turret.queue_free()
+		grid.queue_free()
+		return false
+
+	invader.invader_level = 12
+	invader.attack_timer = 0.0
+	invader._process_attacking_door(invader.get_base_attack_interval() + 0.01)
+	if test_turret.range_reduction < 1.5:
+		printerr("FAILED: Fire quencher Lv 12 did not shorten turret range by 1.5!")
+		invader.queue_free()
+		test_turret.queue_free()
+		grid.queue_free()
+		return false
+	test_turret.queue_free()
+
+	# (D) 暴氧 (oxygen_burster): Lv 7 无自僵直，Lv 8 爆发且自僵直
+	invader.set_character("oxygen_burster")
+	invader.invader_level = 7
+	invader.skill_cooldown_timer = 0.0
+	invader.attack_timer = 0.0
+	invader._process_attacking_door(invader.get_base_attack_interval() + 0.01)
 	if invader.oxygen_self_hitch_timer > 0.0:
-		printerr("FAILED: Oxygen burster burst hitch triggered below level 8!")
+		printerr("FAILED: Oxygen burster hitch triggered below level 8!")
 		invader.queue_free()
 		grid.queue_free()
 		return false
 
-	# 升到 8 级触发自僵直
 	invader.invader_level = 8
 	invader.skill_cooldown_timer = 0.0
 	invader.attack_timer = 0.0
-	invader._process_attacking_door(invader.get_base_attack_interval() + 0.05)
+	invader._process_attacking_door(invader.get_base_attack_interval() + 0.01)
 	if invader.oxygen_self_hitch_timer <= 0.0:
 		printerr("FAILED: Oxygen burster burst hitch did not trigger at level 8!")
 		invader.queue_free()
 		grid.queue_free()
 		return false
 
-	# 5. 验证走廊回血点：低血量脱战撤退、回血期间不涨经验
+	# 5. 验证低血量脱战撤退与回血不涨经验（同时验证全状态如入室后低血撤退）
 	MatchState.invader_hp = int(float(MatchState.INVADER_MAX_HP) * 0.3)
 	invader.oxygen_self_hitch_timer = 0.0
 	invader._process(0.1) # 触发血量危险撤退
@@ -726,7 +964,6 @@ func _test_phase_4_invader_system() -> bool:
 		return false
 
 	var xp_before_heal: int = invader.invader_xp
-	# 移动至回血点
 	while invader.is_moving:
 		invader.current_cell = invader.target_cell
 		invader._on_step_completed()
@@ -745,9 +982,9 @@ func _test_phase_4_invader_system() -> bool:
 		return false
 
 	# 回血心跳处理
-	var hp_before: int = MatchState.invader_hp
+	var hp_before_healing: int = MatchState.invader_hp
 	invader._process(1.0)
-	if MatchState.invader_hp <= hp_before:
+	if MatchState.invader_hp <= hp_before_healing:
 		printerr("FAILED: Invader did not recover HP at heal pad!")
 		invader.queue_free()
 		grid.queue_free()
@@ -758,16 +995,16 @@ func _test_phase_4_invader_system() -> bool:
 		grid.queue_free()
 		return false
 
-	# 6. 验证 15 级能把离子栅 V 打到 0 (使用加速常数打完验证)
+	# 6. 真实破坏满血 30000 离子栅 V（诚实验证，不走 300 HP 捷径）
 	MatchState.reset_match()
 	MatchState.claim_room("room_101", "player")
-	# 门升到离子栅 V
 	MatchState.door_kind["room_101"] = "ion_gate"
 	MatchState.door_rank["room_101"] = 5
 	var stats_ion: Dictionary = MatchState.get_hatch_stats("ion_gate", 5)
-	MatchState.door_max_hp["room_101"] = stats_ion["max_hp"]
-	MatchState.door_hp["room_101"] = 300 # 测试加速常数：设置较小初始 HP 验证 15 级可在测试内打破归零
-	MatchState.door_regen["room_101"] = stats_ion["regen"] # 52 HP/s
+	MatchState.door_max_hp["room_101"] = stats_ion["max_hp"] # 30000
+	MatchState.door_hp["room_101"] = stats_ion["max_hp"]     # 满血 30000
+	MatchState.door_armor["room_101"] = stats_ion["armor"]   # 225
+	MatchState.door_regen["room_101"] = stats_ion["regen"]   # 52 HP/s
 	MatchState.door_broken["room_101"] = false
 
 	invader.set_character("rock_corroder")
@@ -775,20 +1012,20 @@ func _test_phase_4_invader_system() -> bool:
 	invader.target_room_id = "room_101"
 	invader.invader_state = InvaderActor.InvaderState.STOPPED_AT_DOOR
 
-	# 15 级攻击力 (170 + 回血抵消) 远大于回血，必能破门
-	var break_timer_sim: float = 0.0
-	while not MatchState.is_door_broken("room_101") and break_timer_sim < 10.0:
-		invader._process_attacking_door(invader.get_base_attack_interval())
-		MatchState._process(invader.get_base_attack_interval())
-		break_timer_sim += invader.get_base_attack_interval()
+	var sim_break_time: float = 0.0
+	while not MatchState.is_door_broken("room_101") and sim_break_time < 300.0:
+		var dt: float = invader.get_base_attack_interval()
+		invader._process_attacking_door(dt)
+		MatchState._process(dt)
+		sim_break_time += dt
 
-	if not MatchState.is_door_broken("room_101"):
-		printerr("FAILED: Level 15 invader failed to break Ion Gate V to 0 HP!")
+	if not MatchState.is_door_broken("room_101") or MatchState.get_door_hp("room_101") > 0:
+		printerr("FAILED: Level 15 invader failed to break full 30000 HP Ion Gate V! HP: ", MatchState.get_door_hp("room_101"))
 		invader.queue_free()
 		grid.queue_free()
 		return false
 
-	print("PASS: Phase 4 verified: Attack-only XP, pressure spike, skills gating, remote heal pads retreat, and Lv 15 breaking Ion Gate V.")
+	print("PASS: Phase 4 verified: Attack-only XP, pressure spike, battle-tested skills for all 4 roles, remote heal pads verification, and honest 30000 HP Ion Gate V break.")
 	invader.queue_free()
 	grid.queue_free()
 	return true
@@ -958,7 +1195,12 @@ func _test_phase_5_ally_and_hightech() -> bool:
 		grid.queue_free()
 		return false
 
+	# 触发盟友思考 4：放置相邻高科技（催化柱/聚焦镜，测试 t.grid_cell 字段）
+	MatchState.set_actor_money("ally_1", 2000)
+	bot._think_and_build()
+
 	# 验证盟友的所有建筑和炮台只在 room_102 内部，绝不越界
+	ally_buildings = MatchState.get_room_buildings("room_102")
 	for b in ally_buildings:
 		var b_c: Vector2i = b.get("cell", Vector2i.ZERO)
 		if not room_102.is_cell_interior(b_c):
@@ -1021,10 +1263,27 @@ func _test_phase_6_hud_and_full_regression() -> bool:
 		main_scene.queue_free()
 		return false
 
-	# 3. 验证快捷建造栏交互（切换当前选择）
+	# 3. 验证快捷建造栏交互（选择化工厂）
 	hud._select_build("chem_plant", "化工厂")
 	if main_scene.current_build_selection != "chem_plant":
 		printerr("FAILED: Selecting chem_plant did not update current_build_selection in main_scene")
+		main_scene.queue_free()
+		return false
+
+	# 验证七种矿切换（通过点击或按键切换 7 种矿）
+	var mine_keys: Array[String] = ["iron_mine", "tungsten_mine", "molybdenum_mine", "sulfur_mine", "antimony_mine", "gold_mine", "uranium_mine"]
+	for m_key in mine_keys:
+		hud._on_btn_cycle_mine_pressed()
+	if not mine_keys.has(hud.current_selection):
+		printerr("FAILED: Mine cycling failed to select a valid mine!")
+		main_scene.queue_free()
+		return false
+
+	# 验证分支切换（Line A <-> Line B）
+	hud.selected_branch_line = "line_a"
+	hud._on_btn_toggle_branch_pressed()
+	if hud.selected_branch_line != "line_b":
+		printerr("FAILED: Branch toggle button did not switch to line_b!")
 		main_scene.queue_free()
 		return false
 
