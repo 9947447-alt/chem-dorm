@@ -20,6 +20,7 @@ var rooms: Array[RoomData] = []
 var room_by_id: Dictionary = {} # String -> RoomData
 var room_by_door: Dictionary = {} # Vector2i -> RoomData
 var invader_spawn_cell: Vector2i = Vector2i(1, 13)
+var heal_pad_cells: Array[Vector2i] = [Vector2i(2, 14), Vector2i(35, 14)] # 走廊偏僻回血点
 var corridor_cells: Array[Vector2i] = []
 
 var astar_full: AStarGrid2D
@@ -286,6 +287,16 @@ func get_closest_door_exterior_to(from_cell: Vector2i) -> Vector2i:
 			closest_cell = r.door_exterior_cell
 	return closest_cell
 
+func get_closest_heal_pad_to(from_cell: Vector2i) -> Vector2i:
+	var closest_cell: Vector2i = Vector2i.ZERO
+	var min_dist: int = 999999
+	for pad in heal_pad_cells:
+		var path := astar_corridor.get_id_path(from_cell, pad)
+		if path.size() > 0 and path.size() < min_dist:
+			min_dist = path.size()
+			closest_cell = pad
+	return closest_cell
+
 func cell_to_world(cell: Vector2i) -> Vector2:
 	return Vector2(cell.x * TILE_SIZE + TILE_SIZE * 0.5, cell.y * TILE_SIZE + TILE_SIZE * 0.5)
 
@@ -355,6 +366,14 @@ func _draw() -> void:
 	# Draw Entrance Marker
 	var entrance_pos := cell_to_world(invader_spawn_cell)
 	draw_string(font, entrance_pos + Vector2(-12, -20), "走廊入口", HORIZONTAL_ALIGNMENT_LEFT, 80, font_size, Color(1.0, 0.6, 0.6))
+
+	# Draw Heal Pads Marker
+	for pad in heal_pad_cells:
+		var pad_pos := cell_to_world(pad)
+		var pad_rect := Rect2(pad.x * TILE_SIZE + 4, pad.y * TILE_SIZE + 4, TILE_SIZE - 8, TILE_SIZE - 8)
+		draw_rect(pad_rect, Color(0.2, 0.6, 0.35, 0.8))
+		draw_rect(pad_rect, Color(0.4, 0.9, 0.5), false, 1.5)
+		draw_string(font, pad_pos + Vector2(-16, -18), "回血点", HORIZONTAL_ALIGNMENT_CENTER, 32, 10, Color(0.5, 1.0, 0.6))
 
 	# Draw Placed Buildings (Mines, Chem Plants)
 	for b_cell in MatchState.cell_to_building.keys():

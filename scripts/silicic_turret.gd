@@ -20,6 +20,20 @@ var turret_damage: int = 25
 var burst_count: int = 0
 var hitch_timer: float = 0.0
 
+# 敌人技能影响状态（遏火/雾徙）
+var silence_timer: float = 0.0
+var fog_slow_timer: float = 0.0
+var range_reduction: float = 0.0
+
+func apply_silence(duration: float) -> void:
+	silence_timer = maxf(silence_timer, duration)
+
+func apply_fog_slow(duration: float) -> void:
+	fog_slow_timer = maxf(fog_slow_timer, duration)
+
+func set_range_reduction(reduction: float) -> void:
+	range_reduction = reduction
+
 func init_turret(cell: Vector2i, invader: InvaderActor, grid: GridMapManager) -> void:
 	grid_cell = cell
 	target_invader = invader
@@ -48,14 +62,23 @@ func _process(delta: float) -> void:
 	if MatchState.game_result != MatchState.GameResult.NONE:
 		return
 
+	if silence_timer > 0.0:
+		silence_timer = maxf(0.0, silence_timer - delta)
+		return # 被沉默，无法攻击
+
+	if fog_slow_timer > 0.0:
+		fog_slow_timer = maxf(0.0, fog_slow_timer - delta)
+
 	if target_invader == null or not is_instance_valid(target_invader):
 		return
 
 	if not target_invader.is_alive() or not target_invader.visible:
 		return
 
-	var range_px: float = turret_range * float(GridMapManager.TILE_SIZE)
+	var eff_range: float = maxf(1.0, turret_range - range_reduction)
+	var range_px: float = eff_range * float(GridMapManager.TILE_SIZE)
 	var dist: float = global_position.distance_to(target_invader.global_position)
+	var eff_interval: float = fire_interval * (1.35 if fog_slow_timer > 0.0 else 1.0)
 
 	if dist <= range_px:
 		if substance == "perchloric":
@@ -72,7 +95,7 @@ func _process(delta: float) -> void:
 					hitch_timer = 1.0 # 连射后短暂硬直停顿
 		else:
 			fire_timer += delta
-			if fire_timer >= fire_interval:
+			if fire_timer >= eff_interval:
 				fire_timer = 0.0
 				_fire_at_invader()
 	else:

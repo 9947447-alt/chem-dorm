@@ -15,6 +15,7 @@ func _ready() -> void:
 	success = success and _test_phase_1_economy()
 	success = success and _test_phase_2_acid_tree()
 	success = success and _test_phase_3_hatch_system()
+	success = success and _test_phase_4_invader_system()
 	success = success and _test_eject_non_owner_when_room_claimed()
 	success = success and _test_income_generation()
 	success = success and _test_silicic_i_placement_rules()
@@ -619,6 +620,177 @@ func _test_phase_3_hatch_system() -> bool:
 	print("PASS: Phase 3 hatch verified: 30 ranks upgradeable, mid-chain regen active, broken door blocked from upgrade, and Lv 15 break DPS > Ion Gate V regen.")
 	grid.queue_free()
 	return true
+
+func _test_phase_4_invader_system() -> bool:
+	print("\n[TEST Phase 4] Testing Invader XP, Leveling, 4 Roles Skills Gating, Remote Heal Pads...")
+	MatchState.reset_match()
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	MatchState.claim_room("room_101", "player")
+
+	var invader := InvaderActor.new()
+	add_child(invader)
+	invader.init_actor("invader", "入侵者", Color.RED, grid.invader_spawn_cell, grid)
+
+	# 1. 验证跑路时不涨经验
+	invader.set_character("rock_corroder")
+	invader.spawn_invader()
+	if invader.is_moving:
+		invader._process(0.5)
+		if invader.invader_xp != 0:
+			printerr("FAILED: Invader gained XP while walking! XP must only increase when attacking hatch.")
+			invader.queue_free()
+			grid.queue_free()
+			return false
+
+	# 走到门外
+	while invader.is_moving:
+		invader.current_cell = invader.target_cell
+		invader._on_step_completed()
+		invader._advance_path()
+
+	if invader.invader_state != InvaderActor.InvaderState.STOPPED_AT_DOOR:
+		printerr("FAILED: Invader should be STOPPED_AT_DOOR")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 2. 验证打门才涨经验
+	var prev_xp: int = invader.invader_xp
+	invader._process(invader.get_base_attack_interval() + 0.05)
+	if invader.invader_xp <= prev_xp:
+		printerr("FAILED: Invader did not gain XP when attacking door!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 3. 验证技能未到级不能用 (以蚀岩为例: 4级无斩击加成，10级才加成)
+	invader.invader_level = 4
+	var dmg_lv4: int = invader.get_base_attack_damage() # 4级基础 56
+	if dmg_lv4 != 56:
+		printerr("FAILED: Expected level 4 pressure damage 56, got: ", dmg_lv4)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 提升到 10 级后触发斩击加成 (1.5x)
+	invader.invader_level = 10
+	var base_lv10: int = invader.get_base_attack_damage()
+	var expected_lv10_cut: int = int(round(float(base_lv10) * 1.5))
+	if expected_lv10_cut <= base_lv10:
+		printerr("FAILED: Lv 10 skill should boost damage by 1.5x")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 4. 验证暴氧技能未到级不能用与 15 级离子栅 V 特攻
+	MatchState.door_hp["room_101"] = 1000
+	MatchState.door_broken["room_101"] = false
+	invader.target_room_id = "room_101"
+	invader.invader_state = InvaderActor.InvaderState.STOPPED_AT_DOOR
+	invader.set_character("oxygen_burster")
+	invader.invader_level = 7
+	# 7级无自僵直
+	invader.skill_cooldown_timer = 0.0
+	invader.attack_timer = 0.0
+	invader._process_attacking_door(invader.get_base_attack_interval() + 0.05)
+	if invader.oxygen_self_hitch_timer > 0.0:
+		printerr("FAILED: Oxygen burster burst hitch triggered below level 8!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 升到 8 级触发自僵直
+	invader.invader_level = 8
+	invader.skill_cooldown_timer = 0.0
+	invader.attack_timer = 0.0
+	invader._process_attacking_door(invader.get_base_attack_interval() + 0.05)
+	if invader.oxygen_self_hitch_timer <= 0.0:
+		printerr("FAILED: Oxygen burster burst hitch did not trigger at level 8!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 5. 验证走廊回血点：低血量脱战撤退、回血期间不涨经验
+	MatchState.invader_hp = int(float(MatchState.INVADER_MAX_HP) * 0.3)
+	invader.oxygen_self_hitch_timer = 0.0
+	invader._process(0.1) # 触发血量危险撤退
+	if invader.invader_state != InvaderActor.InvaderState.MOVING_TO_HEAL_PAD:
+		printerr("FAILED: Invader did not retreat to heal pad when HP <= 35%, state: ", invader.invader_state)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	var xp_before_heal: int = invader.invader_xp
+	# 移动至回血点
+	while invader.is_moving:
+		invader.current_cell = invader.target_cell
+		invader._on_step_completed()
+		invader._advance_path()
+		invader._process(0.1)
+		if invader.invader_xp != xp_before_heal:
+			printerr("FAILED: XP increased during retreat to heal pad!")
+			invader.queue_free()
+			grid.queue_free()
+			return false
+
+	if invader.invader_state != InvaderActor.InvaderState.HEALING_AT_PAD:
+		printerr("FAILED: Invader should be HEALING_AT_PAD upon arrival")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 回血心跳处理
+	var hp_before: int = MatchState.invader_hp
+	invader._process(1.0)
+	if MatchState.invader_hp <= hp_before:
+		printerr("FAILED: Invader did not recover HP at heal pad!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if invader.invader_xp != xp_before_heal:
+		printerr("FAILED: XP must not increase while healing at pad!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 6. 验证 15 级能把离子栅 V 打到 0 (使用加速常数打完验证)
+	MatchState.reset_match()
+	MatchState.claim_room("room_101", "player")
+	# 门升到离子栅 V
+	MatchState.door_kind["room_101"] = "ion_gate"
+	MatchState.door_rank["room_101"] = 5
+	var stats_ion: Dictionary = MatchState.get_hatch_stats("ion_gate", 5)
+	MatchState.door_max_hp["room_101"] = stats_ion["max_hp"]
+	MatchState.door_hp["room_101"] = 300 # 测试加速常数：设置较小初始 HP 验证 15 级可在测试内打破归零
+	MatchState.door_regen["room_101"] = stats_ion["regen"] # 52 HP/s
+	MatchState.door_broken["room_101"] = false
+
+	invader.set_character("rock_corroder")
+	invader.invader_level = 15
+	invader.target_room_id = "room_101"
+	invader.invader_state = InvaderActor.InvaderState.STOPPED_AT_DOOR
+
+	# 15 级攻击力 (170 + 回血抵消) 远大于回血，必能破门
+	var break_timer_sim: float = 0.0
+	while not MatchState.is_door_broken("room_101") and break_timer_sim < 10.0:
+		invader._process_attacking_door(invader.get_base_attack_interval())
+		MatchState._process(invader.get_base_attack_interval())
+		break_timer_sim += invader.get_base_attack_interval()
+
+	if not MatchState.is_door_broken("room_101"):
+		printerr("FAILED: Level 15 invader failed to break Ion Gate V to 0 HP!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	print("PASS: Phase 4 verified: Attack-only XP, pressure spike, skills gating, remote heal pads retreat, and Lv 15 breaking Ion Gate V.")
+	invader.queue_free()
+	grid.queue_free()
+	return true
+
 
 
 

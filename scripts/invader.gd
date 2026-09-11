@@ -5,6 +5,8 @@ enum InvaderState {
 	WAITING_FOR_SPAWN,
 	APPROACHING_DOOR,
 	STOPPED_AT_DOOR,
+	MOVING_TO_HEAL_PAD,
+	HEALING_AT_PAD,
 	ENTERING_ROOM,
 	ATTACKING_STARTER,
 	IDLE,
@@ -16,12 +18,37 @@ var target_exterior_cell: Vector2i = Vector2i.ZERO
 var target_room_id: String = ""
 var attack_timer: float = 0.0
 
+# 敌人角色与等级经验体系
+var invader_character: String = "rock_corroder" # rock_corroder(蚀岩), mist_walker(雾徙), fire_quencher(遏火), oxygen_burster(暴氧)
+var invader_level: int = 1
+var invader_xp: int = 0
+var invader_xp_to_next: int = 40
+
+# 技能控制与冷却
+var skill_cooldown_timer: float = 0.0
+var oxygen_self_hitch_timer: float = 0.0
+var heal_tick_timer: float = 0.0
+var has_retargeted_at_12: bool = false
+
 # 特效 debuff 状态
 var slow_break_timer: float = 0.0
 var strip_resist_timer: float = 0.0
 var puddle_timer: float = 0.0
 var puddle_dps: int = 0
 var puddle_tick_timer: float = 0.0
+
+const CHARACTER_NAMES: Dictionary = {
+	"rock_corroder": "蚀岩",
+	"mist_walker": "雾徙",
+	"fire_quencher": "遏火",
+	"oxygen_burster": "暴氧"
+}
+
+func set_character(char_id: String) -> void:
+	if CHARACTER_NAMES.has(char_id):
+		invader_character = char_id
+		display_name = CHARACTER_NAMES[char_id]
+		MatchState.invader_character = char_id
 
 func apply_slow_break(duration: float) -> void:
 	slow_break_timer = maxf(slow_break_timer, duration)
@@ -39,6 +66,13 @@ func _ready() -> void:
 	visible = false
 	invader_state = InvaderState.WAITING_FOR_SPAWN
 	MatchState.phase_changed.connect(_on_phase_changed)
+	
+	# 四角色抽一个（默认随机，可外部指定）
+	if invader_character == "":
+		var pool: Array[String] = ["rock_corroder", "mist_walker", "fire_quencher", "oxygen_burster"]
+		set_character(pool[randi() % pool.size()])
+	else:
+		set_character(invader_character)
 
 func _on_phase_changed(new_phase: int) -> void:
 	if new_phase == MatchState.Phase.INVADING:
@@ -52,12 +86,12 @@ func spawn_invader() -> void:
 	current_cell = grid_manager.invader_spawn_cell
 	target_cell = current_cell
 	position = grid_manager.cell_to_world(current_cell)
-	
-	# Determine target room:
-	# Prioritize room claimed by player if exists, otherwise closest door exterior.
+	_pick_target_and_move()
+
+func _pick_target_and_move() -> void:
 	var player_room_id: String = MatchState.get_player_owned_room_id()
 	var target_room: RoomData = null
-	if player_room_id != "":
+	if player_room_id != "" and not MatchState.is_door_broken(player_room_id):
 		target_room = grid_manager.get_room_by_id(player_room_id)
 	
 	if target_room != null:
@@ -84,6 +118,46 @@ func spawn_invader() -> void:
 	
 	print("Invader spawned at %s, moving towards door exterior %s" % [current_cell, target_exterior_cell])
 
+func add_xp(amount: int) -> void:
+	# 打门才涨经验，跑路/回血不涨
+	if invader_state != InvaderState.STOPPED_AT_DOOR:
+		return
+	invader_xp += amount
+	MatchState.invader_xp = invader_xp
+	while invader_xp >= invader_xp_to_next and invader_level < 15:
+		invader_xp -= invader_xp_to_next
+		invader_level += 1
+		invader_xp_to_next = int(round(float(invader_xp_to_next) * 1.35))
+		MatchState.invader_level = invader_level
+		MatchState.invader_level_up.emit(invader_character, invader_level)
+		print("敌人升级！当前等级: %d [%s]" % [invader_level, display_name])
+
+func get_base_attack_damage() -> int:
+	if invader_level == 1:
+		return MatchState.INVADER_ATTACK_DAMAGE # 20 (V0 保持)
+	elif invader_level == 2:
+		return 30
+	elif invader_level == 3:
+		return 42 # 3-4 级压力波
+	elif invader_level == 4:
+		return 56 # 3-4 级压力波
+	elif invader_level < 10:
+		return 60 + (invader_level - 5) * 12
+	elif invader_level < 15:
+		return 120 + (invader_level - 10) * 10
+	else:
+		return 170 # 15 级确保打穿离子栅 V
+
+func get_base_attack_interval() -> float:
+	if invader_level == 1:
+		return MatchState.INVADER_ATTACK_INTERVAL # 1.0 (V0 保持)
+	elif invader_level <= 4:
+		return 0.85
+	elif invader_level < 15:
+		return 0.75
+	else:
+		return 0.6 # 15 级高频拆门
+
 func _process(delta: float) -> void:
 	super._process(delta)
 
@@ -101,6 +175,10 @@ func _process(delta: float) -> void:
 		slow_break_timer = maxf(0.0, slow_break_timer - delta)
 	if strip_resist_timer > 0.0:
 		strip_resist_timer = maxf(0.0, strip_resist_timer - delta)
+	if oxygen_self_hitch_timer > 0.0:
+		oxygen_self_hitch_timer = maxf(0.0, oxygen_self_hitch_timer - delta)
+	if skill_cooldown_timer > 0.0:
+		skill_cooldown_timer = maxf(0.0, skill_cooldown_timer - delta)
 	if puddle_timer > 0.0:
 		puddle_timer = maxf(0.0, puddle_timer - delta)
 		puddle_tick_timer += delta
@@ -108,26 +186,143 @@ func _process(delta: float) -> void:
 			puddle_tick_timer -= 0.5
 			take_damage(int(round(float(puddle_dps) * 0.5)))
 
+	# 检查低血量撤退至走廊回血点
+	if MatchState.invader_hp <= int(float(MatchState.INVADER_MAX_HP) * 0.35):
+		if invader_state == InvaderState.STOPPED_AT_DOOR or invader_state == InvaderState.APPROACHING_DOOR:
+			_retreat_to_heal_pad()
+
 	if invader_state == InvaderState.STOPPED_AT_DOOR:
 		_process_attacking_door(delta)
+	elif invader_state == InvaderState.HEALING_AT_PAD:
+		_process_healing(delta)
 	elif invader_state == InvaderState.ATTACKING_STARTER:
 		_process_attacking_starter(delta)
+
+func _retreat_to_heal_pad() -> void:
+	if grid_manager == null:
+		return
+	var pad_cell: Vector2i = grid_manager.get_closest_heal_pad_to(current_cell)
+	if pad_cell != Vector2i.ZERO:
+		var path: Array[Vector2i] = grid_manager.get_invader_path_to_cell(current_cell, pad_cell)
+		if not path.is_empty():
+			invader_state = InvaderState.MOVING_TO_HEAL_PAD
+			set_target_path(path)
+			print("敌人血量危险 (<=35%)，撤退至走廊回血点: ", pad_cell)
+
+func _process_healing(delta: float) -> void:
+	# 回血时不涨经验
+	heal_tick_timer += delta
+	if heal_tick_timer >= 0.5:
+		heal_tick_timer -= 0.5
+		var new_hp: int = min(MatchState.INVADER_MAX_HP, MatchState.invader_hp + 15)
+		MatchState.invader_hp = new_hp
+		MatchState.invader_hp_changed.emit(new_hp, MatchState.INVADER_MAX_HP)
+		queue_redraw()
+
+	if MatchState.invader_hp >= int(float(MatchState.INVADER_MAX_HP) * 0.9):
+		# 生命值恢复至安全线，重返战场
+		heal_tick_timer = 0.0
+		_pick_target_and_move()
 
 func _process_attacking_door(delta: float) -> void:
 	if target_room_id == "":
 		return
-	
+
+	if oxygen_self_hitch_timer > 0.0:
+		return # 暴氧 Lv 8 爆发后处于僵直自停状态
+
 	if not MatchState.is_door_broken(target_room_id):
 		var eff_delta: float = delta * (0.5 if slow_break_timer > 0.0 else 1.0)
 		attack_timer += eff_delta
-		if attack_timer >= MatchState.INVADER_ATTACK_INTERVAL:
+		var interval: float = get_base_attack_interval()
+		if attack_timer >= interval:
 			attack_timer = 0.0
-			MatchState.damage_door(target_room_id, MatchState.INVADER_ATTACK_DAMAGE)
+
+			# 只有攻击门才涨经验
+			add_xp(15)
+
+			var dmg: int = get_base_attack_damage()
+
+			# 角色专属技能检验（严格未到级不能用）
+			match invader_character:
+				"rock_corroder":
+					# 蚀岩 Lv 5: 强化克制回血门 (抵消回血量)
+					if invader_level >= 5:
+						dmg += MatchState.get_door_regen_rate(target_room_id)
+					# 蚀岩 Lv 10: 对当前舱门造成 50% 额外斩击伤害
+					if invader_level >= 10:
+						dmg = int(round(float(dmg) * 1.5))
+				"mist_walker":
+					# 雾徙 Lv 5: 迷雾减速周围炮台
+					if invader_level >= 5 and skill_cooldown_timer <= 0.0:
+						skill_cooldown_timer = 5.0
+						_apply_mist_to_room(target_room_id)
+					# 雾徙 Lv 12: 瞬间切换攻击另一扇门
+					if invader_level >= 12 and not has_retargeted_at_12:
+						has_retargeted_at_12 = true
+						_retarget_alternate_door()
+						return
+				"fire_quencher":
+					# 遏火 Lv 6: 周期性沉默一座炮台 3 秒
+					if invader_level >= 6 and skill_cooldown_timer <= 0.0:
+						skill_cooldown_timer = 7.0
+						_silence_one_turret_in_room(target_room_id)
+					# 遏火 Lv 12: 削弱房间内所有炮台 1.5 格射程
+					if invader_level >= 12:
+						_shorten_room_turrets_range(target_room_id)
+				"oxygen_burster":
+					# 暴氧 Lv 8: 爆发拆门 (3倍伤害) 并自僵直 1.5 秒
+					if invader_level >= 8 and skill_cooldown_timer <= 0.0:
+						skill_cooldown_timer = 6.0
+						dmg *= 3
+						oxygen_self_hitch_timer = 1.5
+					# 暴氧 Lv 15: 对离子栅 V 造成双倍特攻
+					if invader_level >= 15:
+						if MatchState.get_door_kind(target_room_id) == "ion_gate" and MatchState.get_door_rank(target_room_id) == 5:
+							dmg *= 2
+
+			MatchState.damage_door(target_room_id, dmg)
 			if grid_manager != null:
 				grid_manager.queue_redraw()
-	
+
 	if MatchState.is_door_broken(target_room_id):
 		_enter_room_towards_starter()
+
+func _apply_mist_to_room(r_id: String) -> void:
+	if grid_manager == null:
+		return
+	for t in grid_manager.turrets.values():
+		if t is SilicicTurret and t.room_id == r_id:
+			t.apply_fog_slow(4.0)
+
+func _silence_one_turret_in_room(r_id: String) -> void:
+	if grid_manager == null:
+		return
+	for t in grid_manager.turrets.values():
+		if t is SilicicTurret and t.room_id == r_id:
+			t.apply_silence(3.0)
+			break
+
+func _shorten_room_turrets_range(r_id: String) -> void:
+	if grid_manager == null:
+		return
+	for t in grid_manager.turrets.values():
+		if t is SilicicTurret and t.room_id == r_id:
+			t.set_range_reduction(1.5)
+
+func _retarget_alternate_door() -> void:
+	if grid_manager == null:
+		return
+	for r in grid_manager.get_all_rooms():
+		if r.room_id != target_room_id and not MatchState.is_door_broken(r.room_id):
+			target_room_id = r.room_id
+			target_exterior_cell = r.door_exterior_cell
+			MatchState.invader_target_room_id = target_room_id
+			var path: Array[Vector2i] = grid_manager.get_invader_path_to_cell(current_cell, target_exterior_cell)
+			if not path.is_empty():
+				invader_state = InvaderState.APPROACHING_DOOR
+				set_target_path(path)
+			break
 
 func _enter_room_towards_starter() -> void:
 	if grid_manager == null:
@@ -154,7 +349,7 @@ func _process_attacking_starter(delta: float) -> void:
 		attack_timer += delta
 		if attack_timer >= MatchState.INVADER_ATTACK_INTERVAL:
 			attack_timer = 0.0
-			MatchState.damage_starter(target_room_id, MatchState.INVADER_ATTACK_DAMAGE)
+			MatchState.damage_starter(target_room_id, get_base_attack_damage())
 			if grid_manager != null:
 				grid_manager.queue_redraw()
 	else:
@@ -168,6 +363,9 @@ func _advance_path() -> void:
 		if invader_state == InvaderState.APPROACHING_DOOR:
 			invader_state = InvaderState.STOPPED_AT_DOOR
 			print("Invader arrived outside hatch at cell %s and stopped." % [current_cell])
+		elif invader_state == InvaderState.MOVING_TO_HEAL_PAD:
+			invader_state = InvaderState.HEALING_AT_PAD
+			print("Invader arrived at heal pad %s and started healing." % [current_cell])
 		elif invader_state == InvaderState.ENTERING_ROOM:
 			invader_state = InvaderState.ATTACKING_STARTER
 			print("Invader reached starter at cell %s and began attacking." % [current_cell])
@@ -219,7 +417,9 @@ func _draw() -> void:
 	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w, bar_h), Color(0.1, 0.1, 0.1))
 	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w * hp_ratio, bar_h), Color(0.9, 0.2, 0.2))
 	
-	# Draw name label
+	# Draw name label with Level
 	var font := ThemeDB.fallback_font
 	var font_size := 11
-	draw_string(font, Vector2(-30, -radius - 16), display_name, HORIZONTAL_ALIGNMENT_CENTER, 60, font_size, Color(1.0, 0.4, 0.4))
+	var title_text := "%s (Lv.%d)" % [display_name, invader_level]
+	draw_string(font, Vector2(-40, -radius - 16), title_text, HORIZONTAL_ALIGNMENT_CENTER, 80, font_size, Color(1.0, 0.4, 0.4))
+

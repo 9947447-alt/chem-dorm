@@ -12,6 +12,7 @@ signal game_over(result: int)
 signal door_hp_changed(room_id: String, current_hp: int, max_hp: int)
 signal starter_hp_changed(room_id: String, current_hp: int, max_hp: int)
 signal invader_hp_changed(current_hp: int, max_hp: int)
+signal invader_level_up(character: String, new_level: int)
 
 enum Phase {
 	COUNTDOWN,
@@ -169,6 +170,9 @@ var door_broken: Dictionary = {} # String (room_id) -> bool
 var starter_income_timer: Dictionary = {} # String (room_id) -> float
 var invader_hp: int = INVADER_MAX_HP
 var invader_target_room_id: String = ""
+var invader_character: String = "rock_corroder"
+var invader_level: int = 1
+var invader_xp: int = 0
 
 func _ready() -> void:
 	reset_match()
@@ -199,6 +203,9 @@ func reset_match(countdown_duration: float = 25.0) -> void:
 	door_regen_timer.clear()
 	invader_hp = INVADER_MAX_HP
 	invader_target_room_id = ""
+	invader_character = "rock_corroder"
+	invader_level = 1
+	invader_xp = 0
 
 func register_room(room_id: String, display_name: String = "") -> void:
 	if not room_owners.has(room_id):
