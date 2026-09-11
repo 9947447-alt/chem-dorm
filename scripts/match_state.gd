@@ -111,7 +111,7 @@ const BUILD_CATALOG: Dictionary = {
 		"cost_money": 200,
 		"cost_feedstock": 0,
 		"income_money": 0,
-		"income_feedstock": 5, # 产出化学原料
+		"income_feedstock": 5, # I 档基础原料；升级只加快此项
 		"max_per_room": 999
 	},
 	"silicic_turret_1": {
@@ -175,10 +175,22 @@ const TURRET_DAMAGE: int = 25
 # 舱门常数
 const DOOR_MAX_HP: int = 100
 
+# 化工厂 I–XV（原地、花钱、只加快化学原料）
+const CHEM_PLANT_MAX_LEVEL: int = 15
+const CHEM_PLANT_BASE_FEEDSTOCK: int = 5
+const ROMAN_NUMERALS: Array[String] = [
+	"", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX",
+	"X", "XI", "XII", "XIII", "XIV", "XV"
+]
+
 # 敌人常数
 const INVADER_MAX_HP: int = 200
 const INVADER_ATTACK_DAMAGE: int = 20
 const INVADER_ATTACK_INTERVAL: float = 1.0
+# 15 级基础拆伤必须在扣装甲后仍高于离子栅 V 回血：
+# ion V armor 225 + regen 52 * interval 0.6 = 256.2；360 - 225 = 135，DPS 225，净 173
+const INVADER_LV15_ATTACK_DAMAGE: int = 360
+const INVADER_LV15_ATTACK_INTERVAL: float = 0.6
 
 var current_phase: Phase = Phase.COUNTDOWN
 var countdown_remaining: float = 25.0
@@ -188,6 +200,7 @@ var actor_resources: Dictionary = {} # actor_id -> {"money": int, "feedstock": i
 var room_owners: Dictionary = {} # String (room_id) -> String (actor_id)
 var room_locked: Dictionary = {} # String (room_id) -> bool
 var room_display_names: Dictionary = {} # String (room_id) -> String (display_name)
+var room_interior: Dictionary = {} # String (room_id) -> Rect2i
 var player_room_id: String = "" # "" represents corridor/outside
 
 # 经济与建筑运行时状态
@@ -228,6 +241,7 @@ func reset_match(countdown_duration: float = 25.0) -> void:
 	room_owners.clear()
 	room_locked.clear()
 	room_display_names.clear()
+	room_interior.clear()
 	player_room_id = ""
 	game_result = GameResult.NONE
 	door_hp.clear()
@@ -253,7 +267,7 @@ func reset_match(countdown_duration: float = 25.0) -> void:
 	invader_level = 1
 	invader_xp = 0
 
-func register_room(room_id: String, display_name: String = "") -> void:
+func register_room(room_id: String, display_name: String = "", interior: Rect2i = Rect2i()) -> void:
 	if not room_owners.has(room_id):
 		room_owners[room_id] = ""
 		room_locked[room_id] = false
@@ -274,6 +288,19 @@ func register_room(room_id: String, display_name: String = "") -> void:
 		room_display_names[room_id] = display_name
 	elif not room_display_names.has(room_id):
 		room_display_names[room_id] = room_id
+	if interior.size.x > 0 and interior.size.y > 0:
+		room_interior[room_id] = interior
+
+func get_roman_numeral(n: int) -> String:
+	if n >= 1 and n < ROMAN_NUMERALS.size():
+		return ROMAN_NUMERALS[n]
+	return str(n)
+
+func is_cell_in_room(room_id: String, cell: Vector2i) -> bool:
+	if not room_interior.has(room_id):
+		return false
+	var rect: Rect2i = room_interior[room_id]
+	return rect.has_point(cell)
 
 func get_room_display_name(room_id: String) -> String:
 	return room_display_names.get(room_id, room_id)
@@ -465,6 +492,8 @@ func can_build(room_id: String, item_id: String, actor_id: String, cell: Vector2
 		return {"success": false, "reason": "只能在自己占领的房间建造"}
 	if not BUILD_CATALOG.has(item_id):
 		return {"success": false, "reason": "未知建筑类型"}
+	if not is_cell_in_room(room_id, cell):
+		return {"success": false, "reason": "格子不属于该房间"}
 	if cell_to_building.has(cell):
 		return {"success": false, "reason": "该格已有建筑"}
 	
@@ -508,12 +537,72 @@ func buy_and_place_building(room_id: String, item_id: String, actor_id: String, 
 		"income_money": item.get("income_money", 0),
 		"income_feedstock": item.get("income_feedstock", 0)
 	}
+	if item_id == "chem_plant":
+		b_data["level"] = 1
+		b_data["name"] = "化工厂 %s" % get_roman_numeral(1)
+		b_data["income_feedstock"] = get_chem_plant_income_for_level(1)
 	if not room_buildings.has(room_id):
 		room_buildings[room_id] = []
 	room_buildings[room_id].append(b_data)
 	cell_to_building[cell] = b_data
 	building_added.emit(room_id, b_data)
-	print("建造成功: 在 %s 建造 %s" % [cell, item.get("name", "")])
+	print("建造成功: 在 %s 建造 %s" % [cell, b_data.get("name", item.get("name", ""))])
+	return true
+
+func get_chem_plant_income_for_level(level: int) -> int:
+	var lvl: int = clampi(level, 1, CHEM_PLANT_MAX_LEVEL)
+	return CHEM_PLANT_BASE_FEEDSTOCK * lvl
+
+func get_chem_plant_upgrade_cost(level: int) -> int:
+	return 50 + level * 30
+
+func get_chem_plant_in_room(room_id: String) -> Dictionary:
+	var b_list: Array = room_buildings.get(room_id, [])
+	for b in b_list:
+		if b.get("id", "") == "chem_plant":
+			return b
+	return {}
+
+func can_upgrade_chem_plant(room_id: String, actor_id: String, cell: Vector2i = Vector2i(-1, -1)) -> Dictionary:
+	if room_owners.get(room_id, "") != actor_id:
+		return {"success": false, "reason": "只能升级自己房间的化工厂"}
+	var plant: Dictionary = {}
+	if cell != Vector2i(-1, -1):
+		plant = get_building_at_cell(cell)
+		if plant.get("id", "") != "chem_plant" or plant.get("room_id", "") != room_id:
+			return {"success": false, "reason": "该格没有化工厂"}
+	else:
+		plant = get_chem_plant_in_room(room_id)
+	if plant.is_empty():
+		return {"success": false, "reason": "房间内没有化工厂"}
+	var lvl: int = int(plant.get("level", 1))
+	if lvl >= CHEM_PLANT_MAX_LEVEL:
+		return {"success": false, "reason": "化工厂已达 XV 封顶"}
+	var cost: int = get_chem_plant_upgrade_cost(lvl)
+	if get_actor_money(actor_id) < cost:
+		return {"success": false, "reason": "金钱不足 (需要 %d)" % cost}
+	return {
+		"success": true,
+		"reason": "",
+		"cost_money": cost,
+		"next_level": lvl + 1,
+		"plant": plant
+	}
+
+func upgrade_chem_plant(room_id: String, actor_id: String, cell: Vector2i = Vector2i(-1, -1)) -> bool:
+	var check: Dictionary = can_upgrade_chem_plant(room_id, actor_id, cell)
+	if not check.get("success", false):
+		print("化工厂升级失败: ", check.get("reason", ""))
+		return false
+	var cost: int = int(check.get("cost_money", 0))
+	if not spend_actor_money(actor_id, cost):
+		return false
+	var plant: Dictionary = check.get("plant", {})
+	var next_lvl: int = int(check.get("next_level", 1))
+	plant["level"] = next_lvl
+	plant["income_feedstock"] = get_chem_plant_income_for_level(next_lvl)
+	plant["name"] = "化工厂 %s" % get_roman_numeral(next_lvl)
+	print("化工厂升级成功: %s" % [plant["name"]])
 	return true
 
 # --- 酸树体系与换线规则 ---
@@ -796,7 +885,7 @@ func get_hatch_stats(kind: String, rank: int) -> Dictionary:
 			reg = 25 + (rank - 1) * 3 # 25, 28, 31, 34, 37 HP/s
 			arm = 28 * rank # 28..140
 		"ion_gate":
-			# 终局封顶
+			# 终局封顶。装甲仍克制 1–14 级；15 级基础伤见 INVADER_LV15_ATTACK_DAMAGE
 			max_h = 16000 + (rank - 1) * 3500 # 16000..30000
 			reg = 40 + (rank - 1) * 3 # 40, 43, 46, 49, 52 HP/s
 			arm = 45 * rank # 45..225
@@ -884,6 +973,9 @@ func reduce_door_armor(room_id: String, amount: int) -> int:
 	door_armor[room_id] = new_arm
 	return new_arm
 
+func get_effective_door_damage(raw_damage: int, armor: int) -> int:
+	return max(1, raw_damage - armor)
+
 func is_door_broken(room_id: String) -> bool:
 	return door_broken.get(room_id, false)
 
@@ -892,7 +984,7 @@ func damage_door(room_id: String, damage: int, ignore_armor: bool = false) -> in
 	if not door_hp.has(room_id):
 		door_hp[room_id] = max_h
 	var arm: int = 0 if ignore_armor else get_door_armor(room_id)
-	var eff_dmg: int = max(1, damage - arm)
+	var eff_dmg: int = get_effective_door_damage(damage, arm)
 	var hp: int = max(0, door_hp[room_id] - eff_dmg)
 	door_hp[room_id] = hp
 	if hp <= 0:

@@ -208,6 +208,28 @@ func _think_and_build() -> void:
 			if MatchState.buy_and_place_building(target_room_id, "regulator_stack", actor_id, reg_cell):
 				return
 		
+		# 机械臂：邻接矿山或化工厂
+		var arm_cost: int = int(MatchState.BUILD_CATALOG["robotic_arm"]["cost_money"])
+		if money >= arm_cost:
+			for b in MatchState.get_room_buildings(target_room_id):
+				var cat: String = b.get("category", "")
+				if cat != "mine" and cat != "chem_plant":
+					continue
+				var b_cell: Vector2i = b.get("cell", Vector2i.ZERO)
+				if MatchState.has_adjacent_high_tech(b_cell, "robotic_arm"):
+					continue
+				var arm_neighbors := [
+					b_cell + Vector2i(1, 0),
+					b_cell + Vector2i(-1, 0),
+					b_cell + Vector2i(0, 1),
+					b_cell + Vector2i(0, -1)
+				]
+				for n in arm_neighbors:
+					if empty_cells.has(n):
+						empty_cells.erase(n)
+						if MatchState.buy_and_place_building(target_room_id, "robotic_arm", actor_id, n):
+							return
+
 		# 相邻催化柱或聚焦镜
 		for t in my_turrets:
 			var neighbors := [

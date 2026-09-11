@@ -170,11 +170,7 @@ func _fire_at_invader() -> void:
 				grid_manager.spawn_acid_puddle(target_invader.current_cell, 4.0, 45)
 			target_invader.apply_puddle(4.0, 45)
 		"hydrofluoric":
-			# 破门破甲 (Extra vs hatch armor):
-			# 1. 永久溶蚀削减舱门的装甲值
-			if room_id != "":
-				MatchState.reduce_door_armor(room_id, 10)
-			# 2. 对破门状态下的敌人附加破甲增伤
+			# Extra vs hatch armor：对正在拆门的敌人附加破甲增伤，不溶蚀己方舱门
 			if target_invader.invader_state == InvaderActor.InvaderState.STOPPED_AT_DOOR:
 				final_dmg = int(round(float(final_dmg) * 1.6))
 		"sulfuric":

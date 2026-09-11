@@ -149,7 +149,7 @@ func get_base_attack_damage() -> int:
 	elif invader_level < 15:
 		return 120 + (invader_level - 10) * 10
 	else:
-		return 170 # 15 级确保打穿离子栅 V
+		return MatchState.INVADER_LV15_ATTACK_DAMAGE
 
 func get_base_attack_interval() -> float:
 	if invader_level == 1:
@@ -159,7 +159,7 @@ func get_base_attack_interval() -> float:
 	elif invader_level < 15:
 		return 0.75
 	else:
-		return 0.6 # 15 级高频拆门
+		return MatchState.INVADER_LV15_ATTACK_INTERVAL
 
 func _process(delta: float) -> void:
 	super._process(delta)

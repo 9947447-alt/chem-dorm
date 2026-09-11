@@ -24,14 +24,9 @@ signal upgrade_turret_requested
 @onready var btn_toggle_branch: Button = $BottomBar/Margin/HBox/BtnToggleBranch
 @onready var label_selected: Label = $BottomBar/Margin/HBox/SelectedLabel
 
-const MINES: Array[Dictionary] = [
-	{"id": "iron_mine", "name": "铁矿", "cost": 60},
-	{"id": "tungsten_mine", "name": "钨矿", "cost": 160},
-	{"id": "molybdenum_mine", "name": "钼矿", "cost": 360},
-	{"id": "sulfur_mine", "name": "硫矿", "cost": 800},
-	{"id": "antimony_mine", "name": "锑矿", "cost": 1800},
-	{"id": "gold_mine", "name": "金矿", "cost": 4000},
-	{"id": "uranium_mine", "name": "铀矿", "cost": 10000},
+const MINE_IDS: Array[String] = [
+	"iron_mine", "tungsten_mine", "molybdenum_mine",
+	"sulfur_mine", "antimony_mine", "gold_mine", "uranium_mine"
 ]
 var current_mine_idx: int = 0
 var selected_branch_line: String = "line_a"
@@ -62,10 +57,19 @@ func _ready() -> void:
 
 	_update_hud_display()
 
+func _get_mine(idx: int) -> Dictionary:
+	var id: String = MINE_IDS[idx]
+	var item: Dictionary = MatchState.BUILD_CATALOG[id]
+	return {
+		"id": id,
+		"name": item.get("name", id),
+		"cost": int(item.get("cost_money", 0))
+	}
+
 func _on_btn_cycle_mine_pressed() -> void:
-	if current_selection == MINES[current_mine_idx]["id"]:
-		current_mine_idx = (current_mine_idx + 1) % MINES.size()
-	var mine: Dictionary = MINES[current_mine_idx]
+	if current_selection == MINE_IDS[current_mine_idx]:
+		current_mine_idx = (current_mine_idx + 1) % MINE_IDS.size()
+	var mine: Dictionary = _get_mine(current_mine_idx)
 	btn_build_iron_mine.text = "[3] %s ($%d)" % [mine["name"], mine["cost"]]
 	_select_build(mine["id"], "%s ($%d)" % [mine["name"], mine["cost"]])
 

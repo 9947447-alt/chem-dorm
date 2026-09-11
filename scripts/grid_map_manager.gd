@@ -142,7 +142,7 @@ func _init_rooms() -> void:
 		rooms.append(r)
 		room_by_id[r.room_id] = r
 		room_by_door[r.door_cell] = r
-		MatchState.register_room(r.room_id, r.display_name)
+		MatchState.register_room(r.room_id, r.display_name, r.interior_rect)
 
 func _build_grid() -> void:
 	cells.clear()

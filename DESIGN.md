@@ -39,7 +39,7 @@ Money mines have no upgrade bar. Buy once, fixed payout. One room may hold sever
 | 6 | Gold mine |
 | 7 | Uranium mine |
 
-Chem plant: bought with money, produces feedstock, no upgrade bar. One plant, one product: feedstock.
+Chem plant: bought with money, produces feedstock. In-place money upgrades I–XV; only speeds feedstock; XV is cap. One product: feedstock.
 No reagent split, condenser, electrolyzer, or storage cabinet in v0 (parked).
 
 ## Acid turrets

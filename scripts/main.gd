@@ -93,6 +93,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			_upgrade_turret_at(cell)
 			return
 
+		# 点击化工厂 -> 原地升级 I–XV
+		var existing_b: Dictionary = MatchState.get_building_at_cell(cell)
+		if existing_b.get("id", "") == "chem_plant":
+			MatchState.upgrade_chem_plant(existing_b.get("room_id", ""), "player", cell)
+			return
+
 		# 检查是否点击了舱门 -> 尝试升级门
 		var p_room_id := MatchState.get_player_owned_room_id()
 		if p_room_id != "":
