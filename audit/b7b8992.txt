@@ -1,0 +1,54 @@
+审计对象：b7b8992b81ef4dc008bfa3271f4710bacb973b94（fix(contract): lv15 armored hatch break and remaining p0 gaps）。
+当前 HEAD：100bf665791fe6640ba0b7c7477832e12a8d7936（仅追加 audit/full.txt，源码与 b7b8992 相同）。
+权威合同：DESIGN.md。Godot 4.7.2.stable。未 push。未改代码、未 commit。
+
+实测：
+- godot --headless --path . --import --quit → IMPORT_EXIT:0
+- godot --headless --path . res://tests/test_runner.tscn → TEST_EXIT:0
+  ALL chem-dorm ACCEPTANCE TESTS PASSED!
+
+独立验算（含装甲，禁止裸 DPS）：
+- 离子栅 V：HP 30000，armor=45*5=225，regen=40+12=52
+- Lv15 基础：raw=360，interval=0.6，eff=max(1,360-225)=135，DPS=225，净=173>0，TTK≈173s
+- Lv4：raw=56，interval=0.85，eff=max(1,56-225)=1，DPS≈1.18，净≈-50.82<0
+- 四角色 15 级均至少达到该基础净 DPS；蚀岩/暴氧更高。打穿测试走 damage_door（扣甲）+ MatchState._process（回血）。
+
+逐条：
+
+1. 15 级四角色 vs 离子栅 V 含装甲净 DPS > 回血且门能到 0 — PASS
+   match_state.gd:192-193,887-891,976-987
+   invader.gd:138-162,294
+   tests/test_p0_flow.gd:819-838,1099-1105,2034-2079
+
+2. Lv4 对封顶门净 DPS < 0 — PASS
+   invader.gd:145-146,157-158
+   tests/test_p0_flow.gd:840-848
+
+3. 化工厂 I–XV（原地、花钱、只加快原料、XV 封顶） — PASS
+   DESIGN.md:42
+   match_state.gd:178-184,540-606
+   main.gd:96-99
+   tests/test_p0_flow.gd:376-436
+   实测日志：化工厂 I→XV，再升失败「已达 XV 封顶」
+
+4. HUD 矿价 == BUILD_CATALOG — PASS
+   hud.gd:27-30,60-67,73
+   scenes/hud.tscn:83（铁矿 $60）
+   match_state.gd:36-106
+   tests/test_p0_flow.gd:1391-1405
+
+5. 氢氟酸不减己方门甲 — PASS
+   silicic_turret.gd:172-175（对拆门敌人 1.6x，不调用 reduce_door_armor）
+   tests/test_p0_flow.gd:626-646
+
+6. cell 必须属于房间 — PASS
+   match_state.gd:299-303,495-496,514-516
+   tests/test_p0_flow.gd:438-452
+   实测日志：两次「建造失败: 格子不属于该房间」
+
+7. 盟友会买机械臂 — PASS
+   ally_bot.gd:202-231
+   tests/test_p0_flow.gd:1292-1325
+   实测日志：建造成功: 在 (15, 5) 建造 机械臂
+
+结论：7/7 PASS。无 FAIL，不修、不 commit、不 push。
