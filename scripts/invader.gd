@@ -11,6 +11,7 @@ var invader_state: InvaderState = InvaderState.WAITING_FOR_SPAWN
 var target_exterior_cell: Vector2i = Vector2i.ZERO
 
 func _ready() -> void:
+	super._ready()
 	move_speed = 3.5
 	visible = false
 	invader_state = InvaderState.WAITING_FOR_SPAWN

@@ -2,6 +2,7 @@ class_name PlayerActor
 extends ActorBase
 
 func _ready() -> void:
+	super._ready()
 	move_speed = 6.0 # Slightly faster than bots for good responsiveness
 
 func _process(delta: float) -> void:
@@ -33,6 +34,9 @@ func _try_move_direction(dir: Vector2i) -> void:
 
 func _on_step_completed() -> void:
 	super._on_step_completed()
+	_update_player_room_state()
+
+func _after_ejected_from_room(_p_room_id: String) -> void:
 	_update_player_room_state()
 
 func _update_player_room_state() -> void:

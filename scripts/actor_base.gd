@@ -15,6 +15,13 @@ var move_progress: float = 0.0
 var move_path: Array[Vector2i] = []
 var grid_manager: GridMapManager = null
 
+func _ready() -> void:
+	_connect_claim_signal()
+
+func _exit_tree() -> void:
+	if MatchState.room_claimed.is_connected(_on_room_claimed_global):
+		MatchState.room_claimed.disconnect(_on_room_claimed_global)
+
 func init_actor(p_id: String, p_name: String, p_color: Color, p_cell: Vector2i, p_grid: GridMapManager) -> void:
 	actor_id = p_id
 	display_name = p_name
@@ -23,7 +30,58 @@ func init_actor(p_id: String, p_name: String, p_color: Color, p_cell: Vector2i, 
 	target_cell = p_cell
 	grid_manager = p_grid
 	position = grid_manager.cell_to_world(current_cell)
+	_connect_claim_signal()
 	queue_redraw()
+
+func _connect_claim_signal() -> void:
+	if not MatchState.room_claimed.is_connected(_on_room_claimed_global):
+		MatchState.room_claimed.connect(_on_room_claimed_global)
+
+func _on_room_claimed_global(p_room_id: String, p_claiming_actor_id: String) -> void:
+	if is_queued_for_deletion():
+		return
+	var was_ejected: bool = false
+	if p_claiming_actor_id != actor_id:
+		was_ejected = _check_and_eject_if_in_room(p_room_id)
+	_on_any_room_claimed(p_room_id, p_claiming_actor_id)
+	if was_ejected:
+		_after_ejected_from_room(p_room_id)
+
+func _check_and_eject_if_in_room(p_room_id: String) -> bool:
+	if grid_manager == null:
+		return false
+	var room: RoomData = grid_manager.get_room_by_id(p_room_id)
+	if room == null:
+		return false
+	
+	var in_room: bool = _is_cell_in_room(current_cell, room)
+	if not in_room and is_moving:
+		in_room = _is_cell_in_room(target_cell, room)
+	
+	if in_room:
+		eject_to_cell(room.door_exterior_cell)
+		return true
+	return false
+
+func _is_cell_in_room(cell: Vector2i, room: RoomData) -> bool:
+	return room.is_cell_interior(cell) or cell == room.door_cell or room.is_cell_starter(cell)
+
+func eject_to_cell(dest_cell: Vector2i) -> void:
+	current_cell = dest_cell
+	target_cell = dest_cell
+	is_moving = false
+	move_progress = 0.0
+	move_path.clear()
+	if grid_manager != null:
+		position = grid_manager.cell_to_world(dest_cell)
+		grid_manager.queue_redraw()
+	queue_redraw()
+
+func _after_ejected_from_room(_p_room_id: String) -> void:
+	pass
+
+func _on_any_room_claimed(_p_room_id: String, _p_actor_id: String) -> void:
+	pass
 
 func set_target_path(path: Array[Vector2i]) -> void:
 	move_path = path

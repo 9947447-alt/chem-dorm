@@ -14,8 +14,8 @@ var target_room_id: String = ""
 var think_timer: float = 0.0
 
 func _ready() -> void:
+	super._ready()
 	move_speed = 4.5
-	MatchState.room_claimed.connect(_on_any_room_claimed)
 
 func start_ai() -> void:
 	bot_state = BotState.SEARCHING
@@ -87,6 +87,16 @@ func _on_any_room_claimed(p_room_id: String, p_actor_id: String) -> void:
 		target_room_id = ""
 		move_path.clear()
 		is_moving = false
+		bot_state = BotState.SEARCHING
+		_select_and_navigate_to_room()
+
+func _after_ejected_from_room(p_room_id: String) -> void:
+	if bot_state == BotState.CLAIMED:
+		return
+	if target_room_id == p_room_id:
+		target_room_id = ""
+		room_intent.erase(p_room_id)
+	if bot_state != BotState.MOVING_TO_ROOM:
 		bot_state = BotState.SEARCHING
 		_select_and_navigate_to_room()
 

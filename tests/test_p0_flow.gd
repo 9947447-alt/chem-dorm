@@ -13,6 +13,7 @@ func _ready() -> void:
 	success = success and _test_allies_claim_flow()
 	success = success and _test_invader_corridor_movement()
 	success = success and _test_no_build_menu()
+	success = success and _test_eject_non_owner_when_room_claimed()
 
 	if success:
 		print("========================================")
@@ -272,4 +273,228 @@ func _test_no_build_menu() -> bool:
 			printerr("FAILED: Found forbidden script file: ", f)
 			return false
 	print("PASS: No build menu or tower logic present.")
+	return true
+
+func _test_eject_non_owner_when_room_claimed() -> bool:
+	print("\n[TEST 7] Testing Non-Owner Ejection on Room Claim...")
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	MatchState.reset_match()
+	for r in grid.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name)
+
+	var room_101: RoomData = grid.get_room_by_id("room_101")
+	if room_101 == null:
+		printerr("FAILED: room_101 not found")
+		grid.queue_free()
+		return false
+
+	var exterior_cell: Vector2i = room_101.door_exterior_cell
+	var starter_cell: Vector2i = room_101.starter_cells[0]
+	var interior_cell: Vector2i = Vector2i(5, 5)
+
+	# --- Scenario 1: Player claims room while Ally is inside interior ---
+	var player := PlayerActor.new()
+	add_child(player)
+	player.init_actor("player", "玩家", Color.CYAN, starter_cell, grid)
+
+	var ally := AllyBot.new()
+	add_child(ally)
+	ally.init_actor("ally_1", "盟友1", Color.GREEN, interior_cell, grid)
+
+	if not room_101.is_cell_interior(player.current_cell):
+		printerr("FAILED: Player is not in room_101 interior before claim")
+		player.queue_free()
+		ally.queue_free()
+		grid.queue_free()
+		return false
+
+	if not room_101.is_cell_interior(ally.current_cell):
+		printerr("FAILED: Ally is not in room_101 interior before claim")
+		player.queue_free()
+		ally.queue_free()
+		grid.queue_free()
+		return false
+
+	# Player claims room
+	player._on_step_completed()
+
+	if not MatchState.is_room_locked("room_101") or MatchState.get_room_owner("room_101") != "player":
+		printerr("FAILED: Player failed to claim room_101")
+		player.queue_free()
+		ally.queue_free()
+		grid.queue_free()
+		return false
+
+	# Owner player is not ejected
+	if player.current_cell != starter_cell:
+		printerr("FAILED: Owner player was wrongly ejected from room: ", player.current_cell)
+		player.queue_free()
+		ally.queue_free()
+		grid.queue_free()
+		return false
+
+	# Non-owner ally is ejected to door_exterior_cell
+	if ally.current_cell != exterior_cell:
+		printerr("FAILED: Non-owner ally was not ejected to door_exterior_cell! Got: ", ally.current_cell, " expected: ", exterior_cell)
+		player.queue_free()
+		ally.queue_free()
+		grid.queue_free()
+		return false
+
+	if ally.position != grid.cell_to_world(exterior_cell):
+		printerr("FAILED: Ally visual position does not match door_exterior_cell")
+		player.queue_free()
+		ally.queue_free()
+		grid.queue_free()
+		return false
+
+	if room_101.is_cell_interior(ally.current_cell):
+		printerr("FAILED: Ally is still in room interior after claim")
+		player.queue_free()
+		ally.queue_free()
+		grid.queue_free()
+		return false
+
+	# Non-owner cannot walk into locked room
+	if MatchState.can_actor_enter_room("room_101", "ally_1"):
+		printerr("FAILED: Ally_1 should not be permitted into locked room_101")
+		player.queue_free()
+		ally.queue_free()
+		grid.queue_free()
+		return false
+
+	if grid.is_cell_walkable_for(room_101.door_cell, "ally_1"):
+		printerr("FAILED: Door should not be walkable for ally_1")
+		player.queue_free()
+		ally.queue_free()
+		grid.queue_free()
+		return false
+
+	player.queue_free()
+	ally.queue_free()
+
+	# --- Scenario 2: Ally claims room_102 while Player is inside interior ---
+	var room_102: RoomData = grid.get_room_by_id("room_102")
+	var r2_exterior: Vector2i = room_102.door_exterior_cell
+	var r2_starter: Vector2i = room_102.starter_cells[0]
+	var r2_interior: Vector2i = Vector2i(16, 6)
+
+	var ally2 := AllyBot.new()
+	add_child(ally2)
+	ally2.init_actor("ally_2", "盟友2", Color.GREEN, r2_starter, grid)
+
+	var player2 := PlayerActor.new()
+	add_child(player2)
+	player2.init_actor("player", "玩家", Color.CYAN, r2_interior, grid)
+	player2._update_player_room_state()
+
+	if MatchState.player_room_id != "room_102":
+		printerr("FAILED: Player room id should be room_102 before claim")
+		ally2.queue_free()
+		player2.queue_free()
+		grid.queue_free()
+		return false
+
+	# Ally 2 claims room_102
+	ally2._on_step_completed()
+
+	if MatchState.get_room_owner("room_102") != "ally_2":
+		printerr("FAILED: Ally 2 failed to claim room_102")
+		ally2.queue_free()
+		player2.queue_free()
+		grid.queue_free()
+		return false
+
+	if ally2.current_cell != r2_starter:
+		printerr("FAILED: Owner ally_2 was wrongly ejected")
+		ally2.queue_free()
+		player2.queue_free()
+		grid.queue_free()
+		return false
+
+	if player2.current_cell != r2_exterior:
+		printerr("FAILED: Non-owner player was not ejected to door_exterior_cell! Got: ", player2.current_cell)
+		ally2.queue_free()
+		player2.queue_free()
+		grid.queue_free()
+		return false
+
+	if player2.position != grid.cell_to_world(r2_exterior):
+		printerr("FAILED: Player visual position does not match door_exterior_cell")
+		ally2.queue_free()
+		player2.queue_free()
+		grid.queue_free()
+		return false
+
+	if MatchState.player_room_id != "":
+		printerr("FAILED: Player room id should be empty (corridor) after ejection, got: ", MatchState.player_room_id)
+		ally2.queue_free()
+		player2.queue_free()
+		grid.queue_free()
+		return false
+
+	if grid.is_cell_walkable_for(room_102.door_cell, "player"):
+		printerr("FAILED: Room 102 door should not be walkable for player")
+		ally2.queue_free()
+		player2.queue_free()
+		grid.queue_free()
+		return false
+
+	ally2.queue_free()
+	player2.queue_free()
+
+	# --- Scenario 3: Multiple non-owners (one on interior, one on door) ejected on claim ---
+	var room_103: RoomData = grid.get_room_by_id("room_103")
+	var r3_exterior: Vector2i = room_103.door_exterior_cell
+	var r3_starter: Vector2i = room_103.starter_cells[0]
+	var r3_interior: Vector2i = Vector2i(28, 5)
+	var r3_door: Vector2i = room_103.door_cell
+
+	var ally3 := AllyBot.new()
+	add_child(ally3)
+	ally3.init_actor("ally_3", "盟友3", Color.GREEN, r3_starter, grid)
+
+	var ally4 := AllyBot.new()
+	add_child(ally4)
+	ally4.init_actor("ally_4", "盟友4", Color.YELLOW, r3_interior, grid)
+
+	var ally5 := AllyBot.new()
+	add_child(ally5)
+	ally5.init_actor("ally_5", "盟友5", Color.ORANGE, r3_door, grid)
+
+	ally3._on_step_completed()
+
+	if MatchState.get_room_owner("room_103") != "ally_3":
+		printerr("FAILED: Ally 3 failed to claim room_103")
+		ally3.queue_free()
+		ally4.queue_free()
+		ally5.queue_free()
+		grid.queue_free()
+		return false
+
+	if ally3.current_cell != r3_starter:
+		printerr("FAILED: Owner ally_3 was wrongly ejected")
+		ally3.queue_free()
+		ally4.queue_free()
+		ally5.queue_free()
+		grid.queue_free()
+		return false
+
+	if ally4.current_cell != r3_exterior or ally5.current_cell != r3_exterior:
+		printerr("FAILED: Multiple non-owners were not both ejected to door_exterior_cell! Got ally4: ", ally4.current_cell, " ally5: ", ally5.current_cell)
+		ally3.queue_free()
+		ally4.queue_free()
+		ally5.queue_free()
+		grid.queue_free()
+		return false
+
+	ally3.queue_free()
+	ally4.queue_free()
+	ally5.queue_free()
+
+	print("PASS: Non-owners (player/allies) immediately ejected to door_exterior_cell on room claim, owner remains inside, room locked.")
+	grid.queue_free()
 	return true
