@@ -36,6 +36,9 @@ var strip_resist_timer: float = 0.0
 var puddle_timer: float = 0.0
 var puddle_dps: int = 0
 var puddle_tick_timer: float = 0.0
+var silicic_slow_timer: float = 0.0
+var silicic_slow_factor: float = 1.0
+var carbonate_hitch_timer: float = 0.0
 
 const CHARACTER_NAMES: Dictionary = {
 	"rock_corroder": "蚀岩",
@@ -53,12 +56,48 @@ func set_character(char_id: String) -> void:
 func apply_slow_break(duration: float) -> void:
 	slow_break_timer = maxf(slow_break_timer, duration)
 
+func apply_silicic_slow(duration: float, factor: float) -> void:
+	if duration <= 0.0:
+		return
+	# factor 必须 < 1，禁止把减速做成加速
+	var f: float = clampf(factor, 0.2, 0.9)
+	if silicic_slow_timer <= 0.0:
+		silicic_slow_factor = f
+	else:
+		silicic_slow_factor = minf(silicic_slow_factor, f)
+	silicic_slow_timer = maxf(silicic_slow_timer, duration)
+	_sync_status_text()
+
+func apply_carbonate_hitch(duration: float) -> void:
+	if duration <= 0.0:
+		return
+	carbonate_hitch_timer = maxf(carbonate_hitch_timer, duration)
+	_sync_status_text()
+
 func apply_strip_resist(duration: float) -> void:
 	strip_resist_timer = maxf(strip_resist_timer, duration)
 
 func apply_puddle(duration: float, damage_per_sec: int) -> void:
 	puddle_timer = maxf(puddle_timer, duration)
 	puddle_dps = max(puddle_dps, damage_per_sec)
+
+func get_effective_move_speed() -> float:
+	if carbonate_hitch_timer > 0.0:
+		return 0.0
+	if silicic_slow_timer > 0.0:
+		return move_speed * silicic_slow_factor
+	return move_speed
+
+func _sync_status_text() -> void:
+	var parts: PackedStringArray = PackedStringArray()
+	if silicic_slow_timer > 0.0:
+		parts.append("胶滞")
+	if carbonate_hitch_timer > 0.0:
+		parts.append("沸断")
+	var text: String = " ".join(parts)
+	if text != MatchState.invader_status_text:
+		MatchState.invader_status_text = text
+		MatchState.invader_hp_changed.emit(MatchState.invader_hp, MatchState.INVADER_MAX_HP)
 
 func _ready() -> void:
 	super._ready()
@@ -161,7 +200,25 @@ func get_base_attack_interval() -> float:
 	else:
 		return MatchState.INVADER_LV15_ATTACK_INTERVAL
 
+func _tick_status_timers(delta: float) -> void:
+	if silicic_slow_timer > 0.0:
+		silicic_slow_timer = maxf(0.0, silicic_slow_timer - delta)
+		if silicic_slow_timer <= 0.0:
+			silicic_slow_factor = 1.0
+	if carbonate_hitch_timer > 0.0:
+		carbonate_hitch_timer = maxf(0.0, carbonate_hitch_timer - delta)
+	if slow_break_timer > 0.0:
+		slow_break_timer = maxf(0.0, slow_break_timer - delta)
+	if strip_resist_timer > 0.0:
+		strip_resist_timer = maxf(0.0, strip_resist_timer - delta)
+	if oxygen_self_hitch_timer > 0.0:
+		oxygen_self_hitch_timer = maxf(0.0, oxygen_self_hitch_timer - delta)
+	if skill_cooldown_timer > 0.0:
+		skill_cooldown_timer = maxf(0.0, skill_cooldown_timer - delta)
+	_sync_status_text()
+
 func _process(delta: float) -> void:
+	_tick_status_timers(delta)
 	super._process(delta)
 
 	if invader_state == InvaderState.DEAD or invader_state == InvaderState.IDLE:
@@ -174,14 +231,6 @@ func _process(delta: float) -> void:
 		return
 
 	# 处理 debuff 衰减与 DoT
-	if slow_break_timer > 0.0:
-		slow_break_timer = maxf(0.0, slow_break_timer - delta)
-	if strip_resist_timer > 0.0:
-		strip_resist_timer = maxf(0.0, strip_resist_timer - delta)
-	if oxygen_self_hitch_timer > 0.0:
-		oxygen_self_hitch_timer = maxf(0.0, oxygen_self_hitch_timer - delta)
-	if skill_cooldown_timer > 0.0:
-		skill_cooldown_timer = maxf(0.0, skill_cooldown_timer - delta)
 	if puddle_timer > 0.0:
 		puddle_timer = maxf(0.0, puddle_timer - delta)
 		puddle_tick_timer += delta
@@ -240,10 +289,16 @@ func _process_attacking_door(delta: float) -> void:
 
 	if oxygen_self_hitch_timer > 0.0:
 		return # 暴氧 Lv 8 爆发后处于僵直自停状态
+	if carbonate_hitch_timer > 0.0:
+		return # 碳酸命中：暂停拆门扣血
 
 	if not MatchState.is_door_broken(target_room_id):
-		var eff_delta: float = delta * (0.5 if slow_break_timer > 0.0 else 1.0)
-		attack_timer += eff_delta
+		var break_scale: float = 1.0
+		if slow_break_timer > 0.0:
+			break_scale *= 0.5
+		if silicic_slow_timer > 0.0:
+			break_scale *= silicic_slow_factor
+		attack_timer += delta * break_scale
 		var interval: float = get_base_attack_interval()
 		if attack_timer >= interval:
 			attack_timer = 0.0

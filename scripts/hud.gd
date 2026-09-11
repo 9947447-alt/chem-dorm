@@ -200,7 +200,11 @@ func _update_invader_hp_display(hp: int, max_hp: int) -> void:
 		"mist_walker": char_title = "雾徙"
 		"fire_quencher": char_title = "遏火"
 		"oxygen_burster": char_title = "暴氧"
-	label_invader_hp.text = "敌人: %s (Lv.%d) %d/%d" % [char_title, MatchState.invader_level, hp, max_hp]
+	var status: String = MatchState.invader_status_text
+	if status != "":
+		label_invader_hp.text = "敌人: %s (Lv.%d) %d/%d [%s]" % [char_title, MatchState.invader_level, hp, max_hp, status]
+	else:
+		label_invader_hp.text = "敌人: %s (Lv.%d) %d/%d" % [char_title, MatchState.invader_level, hp, max_hp]
 
 func _on_game_over(_result: int) -> void:
 	_update_outcome_display()

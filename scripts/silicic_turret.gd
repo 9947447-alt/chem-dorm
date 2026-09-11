@@ -161,6 +161,11 @@ func _fire_at_invader() -> void:
 
 	# 换线物质特效触发
 	match substance:
+		"silicic":
+			var slow: Dictionary = MatchState.get_silicic_slow_params(rank)
+			target_invader.apply_silicic_slow(float(slow["duration"]), float(slow["factor"]))
+		"carbonate":
+			target_invader.apply_carbonate_hitch(MatchState.get_carbonate_hitch_duration(rank))
 		"hypochlorous":
 			# 减缓破门速度
 			target_invader.apply_slow_break(2.0)

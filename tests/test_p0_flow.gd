@@ -14,6 +14,7 @@ func _ready() -> void:
 	success = success and _test_invader_corridor_movement()
 	success = success and _test_phase_1_economy()
 	success = success and _test_phase_2_acid_tree()
+	success = success and _test_silicic_carbonate_hit_status()
 	success = success and _test_phase_3_hatch_system()
 	success = success and _test_phase_4_invader_system()
 	success = success and _test_phase_5_ally_and_hightech()
@@ -745,6 +746,279 @@ func _test_phase_2_acid_tree() -> bool:
 		return false
 
 	print("PASS: Phase 2 acid tree verified: Stepwise upgrades, capstone titles, no-plant branch lock, branch irreversibility, Line B progression, and all 7 branch specials.")
+	invader.queue_free()
+	grid.queue_free()
+	return true
+
+func _test_silicic_carbonate_hit_status() -> bool:
+	print("\n[TEST] Silicic slow + carbonate hitch on production hit path...")
+	MatchState.reset_match()
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+	MatchState.claim_room("room_101", "player")
+	MatchState.invader_hp = 10000
+	MatchState.door_hp["room_101"] = 10000
+	MatchState.door_armor["room_101"] = 0
+	MatchState.door_broken["room_101"] = false
+
+	var invader := InvaderActor.new()
+	add_child(invader)
+	invader.init_actor("invader", "入侵者", Color.RED, Vector2i(8, 13), grid)
+	invader.visible = true
+	invader.set_character("fire_quencher")
+	invader.invader_level = 1
+	invader.invader_xp_to_next = 99999
+	invader.move_speed = 3.5
+
+	var turret := SilicicTurret.new()
+	grid.add_turret(Vector2i(5, 5), turret)
+	turret.init_turret(Vector2i(5, 5), invader, grid)
+	turret.room_id = "room_101"
+
+	# --- 硅酸 I 命中：格子移动变慢 ---
+	turret.substance = "silicic"
+	turret.rank = 1
+	turret.apply_stats()
+	invader.invader_state = InvaderActor.InvaderState.APPROACHING_DOOR
+	invader.current_cell = Vector2i(8, 13)
+	invader.target_cell = Vector2i(9, 13)
+	invader.is_moving = true
+	invader.move_progress = 0.0
+	invader.silicic_slow_timer = 0.0
+	invader.silicic_slow_factor = 1.0
+	invader._process(0.1)
+	var progress_unslowed: float = invader.move_progress
+	if progress_unslowed <= 0.0:
+		printerr("FAILED: Baseline invader grid move made no progress")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	invader.current_cell = Vector2i(8, 13)
+	invader.target_cell = Vector2i(9, 13)
+	invader.is_moving = true
+	invader.move_progress = 0.0
+	invader.position = grid.cell_to_world(invader.current_cell)
+	turret._fire_at_invader()
+	if invader.silicic_slow_timer <= 0.0:
+		printerr("FAILED: Silicic I hit must apply silicic_slow_timer via _fire_at_invader")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if invader.silicic_slow_factor >= 1.0:
+		printerr("FAILED: Silicic slow factor must be < 1 (player buff, cannot speed the invader)")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	var silicic_i_duration: float = invader.silicic_slow_timer
+	var silicic_i_factor: float = invader.silicic_slow_factor
+	invader._process(0.1)
+	var progress_slowed: float = invader.move_progress
+	if progress_slowed >= progress_unslowed - 0.001:
+		printerr("FAILED: Silicic I hit must slow grid movement. unslowed=%f slowed=%f" % [progress_unslowed, progress_slowed])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 到期后移速恢复
+	invader.is_moving = false
+	invader._process(invader.silicic_slow_timer + 0.05)
+	if invader.silicic_slow_timer > 0.0:
+		printerr("FAILED: Silicic slow must expire")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	invader.current_cell = Vector2i(8, 13)
+	invader.target_cell = Vector2i(9, 13)
+	invader.is_moving = true
+	invader.move_progress = 0.0
+	invader.position = grid.cell_to_world(invader.current_cell)
+	invader._process(0.1)
+	if invader.move_progress < progress_unslowed - 0.001:
+		printerr("FAILED: Movement must recover after silicic slow expires. recovered=%f baseline=%f" % [invader.move_progress, progress_unslowed])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# --- 硅酸 I 命中：拆门 DPS 下降 ---
+	invader.is_moving = false
+	invader.move_path.clear()
+	invader.invader_state = InvaderActor.InvaderState.STOPPED_AT_DOOR
+	invader.target_room_id = "room_101"
+	invader.attack_timer = 0.0
+	invader.silicic_slow_timer = 0.0
+	invader.silicic_slow_factor = 1.0
+	invader.slow_break_timer = 0.0
+	invader.carbonate_hitch_timer = 0.0
+	invader.oxygen_self_hitch_timer = 0.0
+	MatchState.door_hp["room_101"] = 10000
+	var hp_before_unslowed: int = MatchState.get_door_hp("room_101")
+	invader._process(invader.get_base_attack_interval() + 0.05)
+	var unslowed_door_dmg: int = hp_before_unslowed - MatchState.get_door_hp("room_101")
+	if unslowed_door_dmg <= 0:
+		printerr("FAILED: Baseline door hit must deal damage")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	MatchState.door_hp["room_101"] = 10000
+	invader.attack_timer = 0.0
+	turret._fire_at_invader()
+	var hp_before_slowed: int = MatchState.get_door_hp("room_101")
+	invader._process(invader.get_base_attack_interval() + 0.05)
+	var slowed_door_dmg: int = hp_before_slowed - MatchState.get_door_hp("room_101")
+	if slowed_door_dmg >= unslowed_door_dmg:
+		printerr("FAILED: Silicic I hit must reduce door-break DPS. unslowed=%d slowed=%d" % [unslowed_door_dmg, slowed_door_dmg])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# --- 胶幕 (硅酸 V) 只加强同一减速，不换线 ---
+	invader.silicic_slow_timer = 0.0
+	invader.silicic_slow_factor = 1.0
+	turret.substance = "silicic"
+	turret.rank = 5
+	turret.apply_stats()
+	if not MatchState.get_turret_display_name("silicic", 5).contains("胶幕"):
+		printerr("FAILED: Silicic V display must remain 胶幕")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	turret._fire_at_invader()
+	if turret.substance != "silicic" or turret.rank != 5:
+		printerr("FAILED: 胶幕 hit must not change turret line")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if invader.silicic_slow_timer <= silicic_i_duration:
+		printerr("FAILED: 胶幕 must strengthen silicic slow duration. I=%f V=%f" % [silicic_i_duration, invader.silicic_slow_timer])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if invader.silicic_slow_factor >= silicic_i_factor:
+		printerr("FAILED: 胶幕 must strengthen silicic slow factor. I=%f V=%f" % [silicic_i_factor, invader.silicic_slow_factor])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if invader.carbonate_hitch_timer > 0.0:
+		printerr("FAILED: Silicic must not apply carbonate hitch")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# --- 碳酸 I 命中：正在拆门则暂停扣门血 ---
+	turret.substance = "carbonate"
+	turret.rank = 1
+	turret.apply_stats()
+	invader.silicic_slow_timer = 0.0
+	invader.silicic_slow_factor = 1.0
+	invader.carbonate_hitch_timer = 0.0
+	invader.oxygen_self_hitch_timer = 0.0
+	invader.slow_break_timer = 0.0
+	invader.invader_state = InvaderActor.InvaderState.STOPPED_AT_DOOR
+	invader.target_room_id = "room_101"
+	invader.is_moving = false
+	MatchState.door_hp["room_101"] = 10000
+	turret._fire_at_invader()
+	if invader.carbonate_hitch_timer <= 0.0:
+		printerr("FAILED: Carbonate I hit must apply hitch via _fire_at_invader")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	var carbonate_i_hitch: float = invader.carbonate_hitch_timer
+	# 命中后再把拆门计时加满：证明硬直是暂停扣血，而不是只清了 wind-up
+	invader.attack_timer = invader.get_base_attack_interval()
+	var hp_at_hitch: int = MatchState.get_door_hp("room_101")
+	invader._process(minf(0.5, carbonate_i_hitch - 0.05))
+	if MatchState.get_door_hp("room_101") != hp_at_hitch:
+		printerr("FAILED: Carbonate hitch must pause door HP damage. before=%d after=%d" % [hp_at_hitch, MatchState.get_door_hp("room_101")])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 到期后恢复拆门
+	invader._process(invader.carbonate_hitch_timer + 0.05)
+	if invader.carbonate_hitch_timer > 0.0:
+		printerr("FAILED: Carbonate hitch must expire")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	invader.attack_timer = invader.get_base_attack_interval()
+	invader._process(0.05)
+	if MatchState.get_door_hp("room_101") >= hp_at_hitch:
+		printerr("FAILED: Door-break must resume after carbonate hitch expires")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# --- 碳酸打断进房移动 ---
+	invader.carbonate_hitch_timer = 0.0
+	invader.invader_state = InvaderActor.InvaderState.ENTERING_ROOM
+	invader.current_cell = Vector2i(6, 12)
+	invader.target_cell = Vector2i(6, 11)
+	invader.is_moving = true
+	invader.move_progress = 0.0
+	invader.position = grid.cell_to_world(invader.current_cell)
+	turret._fire_at_invader()
+	invader._process(0.4)
+	if invader.move_progress > 0.001:
+		printerr("FAILED: Carbonate hitch must freeze ENTERING_ROOM movement, progress=%f" % invader.move_progress)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if invader.current_cell != Vector2i(6, 12):
+		printerr("FAILED: Carbonate hitch must not advance ENTERING_ROOM cell")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# --- 沸泉 (碳酸 V) 只加强同一硬直，不换线 ---
+	invader.is_moving = false
+	invader.carbonate_hitch_timer = 0.0
+	turret.substance = "carbonate"
+	turret.rank = 5
+	turret.apply_stats()
+	if not MatchState.get_turret_display_name("carbonate", 5).contains("沸泉"):
+		printerr("FAILED: Carbonate V display must remain 沸泉")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	turret._fire_at_invader()
+	if turret.substance != "carbonate" or turret.rank != 5:
+		printerr("FAILED: 沸泉 hit must not change turret line")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if invader.carbonate_hitch_timer <= carbonate_i_hitch:
+		printerr("FAILED: 沸泉 must strengthen hitch duration. I=%f V=%f" % [carbonate_i_hitch, invader.carbonate_hitch_timer])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if invader.silicic_slow_timer > 0.0:
+		printerr("FAILED: Carbonate must not apply silicic slow")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# --- 盐酸及以后不获得这两条 ---
+	var later: Array[String] = ["hydrochloric", "sulfuric", "perchloric", "fluoroantimonic"]
+	for sub in later:
+		invader.silicic_slow_timer = 0.0
+		invader.silicic_slow_factor = 1.0
+		invader.carbonate_hitch_timer = 0.0
+		turret.substance = sub
+		turret.rank = 1
+		turret.branch_line = "line_b"
+		turret.apply_stats()
+		turret._fire_at_invader()
+		if invader.silicic_slow_timer > 0.0 or invader.carbonate_hitch_timer > 0.0:
+			printerr("FAILED: %s must not apply silicic slow or carbonate hitch" % sub)
+			invader.queue_free()
+			grid.queue_free()
+			return false
+
+	print("PASS: Silicic slow and carbonate hitch apply on hit, expire, V only strengthens same effect; later acids excluded.")
 	invader.queue_free()
 	grid.queue_free()
 	return true
@@ -2052,6 +2326,9 @@ func _simulate_lv15_ion_gate_v_break(invader: InvaderActor, char_id: String) -> 
 	invader.oxygen_self_hitch_timer = 0.0
 	invader.has_retargeted_at_12 = true
 	invader.slow_break_timer = 0.0
+	invader.silicic_slow_timer = 0.0
+	invader.silicic_slow_factor = 1.0
+	invader.carbonate_hitch_timer = 0.0
 	MatchState.invader_hp = MatchState.INVADER_MAX_HP
 	MatchState.invader_level = 15
 

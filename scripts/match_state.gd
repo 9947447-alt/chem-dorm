@@ -228,6 +228,7 @@ var invader_target_room_id: String = ""
 var invader_character: String = "rock_corroder"
 var invader_level: int = 1
 var invader_xp: int = 0
+var invader_status_text: String = "" # 可选 HUD：胶滞 / 沸断
 
 func _ready() -> void:
 	reset_match()
@@ -266,6 +267,7 @@ func reset_match(countdown_duration: float = 25.0) -> void:
 	invader_character = ROSTER[randi() % ROSTER.size()]
 	invader_level = 1
 	invader_xp = 0
+	invader_status_text = ""
 
 func register_room(room_id: String, display_name: String = "", interior: Rect2i = Rect2i()) -> void:
 	if not room_owners.has(room_id):
@@ -687,6 +689,19 @@ func get_turret_stats(substance: String, rank: int) -> Dictionary:
 		"interval": t_interval,
 		"damage": t_damage
 	}
+
+# 硅酸 I–V / 胶幕：同一条减速，V 只加长加深度，factor 恒 < 1。
+func get_silicic_slow_params(rank: int) -> Dictionary:
+	var r: int = clampi(rank, 1, 5)
+	return {
+		"duration": 1.25 + 0.25 * float(r),
+		"factor": 0.70 - 0.05 * float(r)
+	}
+
+# 碳酸 I–V / 沸泉：同一条拆门/进房硬直，V 只加长。
+func get_carbonate_hitch_duration(rank: int) -> float:
+	var r: int = clampi(rank, 1, 5)
+	return 0.6 + 0.2 * float(r)
 
 func get_next_turret_upgrade(substance: String, rank: int, current_branch: String, chosen_branch: String = "") -> Dictionary:
 	if (substance == "hydrofluoric" or substance == "fluoroantimonic") and rank >= 5:

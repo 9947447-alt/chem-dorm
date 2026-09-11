@@ -112,9 +112,12 @@ func _advance_path() -> void:
 func _on_path_blocked() -> void:
 	pass
 
+func get_effective_move_speed() -> float:
+	return move_speed
+
 func _process(delta: float) -> void:
 	if is_moving:
-		move_progress += move_speed * delta
+		move_progress += get_effective_move_speed() * delta
 		var start_pos: Vector2 = grid_manager.cell_to_world(current_cell)
 		var end_pos: Vector2 = grid_manager.cell_to_world(target_cell)
 		
