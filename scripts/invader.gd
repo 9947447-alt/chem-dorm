@@ -16,6 +16,23 @@ var target_exterior_cell: Vector2i = Vector2i.ZERO
 var target_room_id: String = ""
 var attack_timer: float = 0.0
 
+# 特效 debuff 状态
+var slow_break_timer: float = 0.0
+var strip_resist_timer: float = 0.0
+var puddle_timer: float = 0.0
+var puddle_dps: int = 0
+var puddle_tick_timer: float = 0.0
+
+func apply_slow_break(duration: float) -> void:
+	slow_break_timer = maxf(slow_break_timer, duration)
+
+func apply_strip_resist(duration: float) -> void:
+	strip_resist_timer = maxf(strip_resist_timer, duration)
+
+func apply_puddle(duration: float, damage_per_sec: int) -> void:
+	puddle_timer = maxf(puddle_timer, duration)
+	puddle_dps = max(puddle_dps, damage_per_sec)
+
 func _ready() -> void:
 	super._ready()
 	move_speed = 3.5
@@ -79,6 +96,18 @@ func _process(delta: float) -> void:
 		move_path.clear()
 		return
 
+	# 处理 debuff 衰减与 DoT
+	if slow_break_timer > 0.0:
+		slow_break_timer = maxf(0.0, slow_break_timer - delta)
+	if strip_resist_timer > 0.0:
+		strip_resist_timer = maxf(0.0, strip_resist_timer - delta)
+	if puddle_timer > 0.0:
+		puddle_timer = maxf(0.0, puddle_timer - delta)
+		puddle_tick_timer += delta
+		if puddle_tick_timer >= 0.5:
+			puddle_tick_timer -= 0.5
+			take_damage(int(round(float(puddle_dps) * 0.5)))
+
 	if invader_state == InvaderState.STOPPED_AT_DOOR:
 		_process_attacking_door(delta)
 	elif invader_state == InvaderState.ATTACKING_STARTER:
@@ -89,7 +118,8 @@ func _process_attacking_door(delta: float) -> void:
 		return
 	
 	if not MatchState.is_door_broken(target_room_id):
-		attack_timer += delta
+		var eff_delta: float = delta * (0.5 if slow_break_timer > 0.0 else 1.0)
+		attack_timer += eff_delta
 		if attack_timer >= MatchState.INVADER_ATTACK_INTERVAL:
 			attack_timer = 0.0
 			MatchState.damage_door(target_room_id, MatchState.INVADER_ATTACK_DAMAGE)
@@ -154,7 +184,10 @@ func is_alive() -> bool:
 func take_damage(damage: int) -> void:
 	if not is_alive():
 		return
-	var remaining: int = MatchState.damage_invader(damage)
+	var final_damage: int = damage
+	if strip_resist_timer > 0.0:
+		final_damage = int(round(float(final_damage) * 1.3))
+	var remaining: int = MatchState.damage_invader(final_damage)
 	queue_redraw()
 	if remaining <= 0:
 		die()

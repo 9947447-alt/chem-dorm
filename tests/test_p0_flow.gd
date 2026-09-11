@@ -13,6 +13,7 @@ func _ready() -> void:
 	success = success and _test_allies_claim_flow()
 	success = success and _test_invader_corridor_movement()
 	success = success and _test_phase_1_economy()
+	success = success and _test_phase_2_acid_tree()
 	success = success and _test_eject_non_owner_when_room_claimed()
 	success = success and _test_income_generation()
 	success = success and _test_silicic_i_placement_rules()
@@ -370,6 +371,166 @@ func _test_phase_1_economy() -> bool:
 	print("PASS: Phase 1 economy verified: Dual resources, mines payout, Uranium 1-per-room limit, Chem plant feedstock payout.")
 	grid.queue_free()
 	return true
+
+func _test_phase_2_acid_tree() -> bool:
+	print("\n[TEST Phase 2] Testing Acid Tree (Full Lines, Capstone Names, No-Plant Lock, Specials)...")
+	MatchState.reset_match()
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	# 1. 验证 V 档冠名严格符合 DESIGN 表
+	var cap_tests: Dictionary = {
+		"silicic": "胶幕",
+		"carbonate": "沸泉",
+		"hypochlorous": "漂白",
+		"hydrosulfuric": "硫沼",
+		"hydrofluoric": "蚀晶",
+		"hydrochloric": "盐雾",
+		"sulfuric": "发烟",
+		"perchloric": "爆氧",
+		"fluoroantimonic": "魔酸"
+	}
+	for sub in cap_tests.keys():
+		var display: String = MatchState.get_turret_display_name(sub, 5)
+		if not display.contains(cap_tests[sub]):
+			printerr("FAILED: Capstone title for %s does not contain %s, got: %s" % [sub, cap_tests[sub], display])
+			grid.queue_free()
+			return false
+
+	# 2. 验证炮台按序晋升，无跳档
+	MatchState.claim_room("room_101", "player")
+	MatchState.add_money(50000)
+	MatchState.add_feedstock(500)
+
+	var invader := InvaderActor.new()
+	add_child(invader)
+	invader.init_actor("invader", "入侵者", Color.RED, Vector2i(6, 13), grid)
+	invader.visible = true
+
+	var turret := SilicicTurret.new()
+	grid.add_turret(Vector2i(5, 5), turret)
+	turret.init_turret(Vector2i(5, 5), invader, grid)
+
+	# 硅酸 I -> V
+	for r in range(1, 5):
+		if not MatchState.upgrade_turret(turret):
+			printerr("FAILED: Upgrading silicic %d to %d failed" % [r, r + 1])
+			invader.queue_free()
+			grid.queue_free()
+			return false
+	if turret.substance != "silicic" or turret.rank != 5:
+		printerr("FAILED: Expected silicic rank 5, got %s %d" % [turret.substance, turret.rank])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 硅酸 V -> 碳酸 I
+	if not MatchState.upgrade_turret(turret):
+		printerr("FAILED: Upgrading silicic 5 to carbonate 1 failed")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if turret.substance != "carbonate" or turret.rank != 1:
+		printerr("FAILED: Expected carbonate rank 1")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 碳酸 I -> V
+	for r in range(1, 5):
+		if not MatchState.upgrade_turret(turret):
+			printerr("FAILED: Upgrading carbonate %d to %d failed" % [r, r + 1])
+			invader.queue_free()
+			grid.queue_free()
+			return false
+
+	# 3. 验证无化工厂不能换线
+	if MatchState.has_chem_plant("room_101"):
+		printerr("FAILED: Room 101 should not have chem plant yet")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	var branch_check := MatchState.can_upgrade_turret(turret, "line_a")
+	if branch_check.get("success", false):
+		printerr("FAILED: Turret must NOT be able to branch without a chem plant!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 4. 建造化工厂后允许换线，且换线后不能回头
+	var cell_plant := Vector2i(5, 6)
+	if not MatchState.buy_and_place_building("room_101", "chem_plant", "player", cell_plant):
+		printerr("FAILED: Failed to build chem plant")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 选择 Line A 换线 -> 次氯酸 I
+	if not MatchState.upgrade_turret(turret, "line_a"):
+		printerr("FAILED: Failed to branch to line_a with chem plant present")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	if turret.substance != "hypochlorous" or turret.rank != 1 or turret.branch_line != "line_a":
+		printerr("FAILED: Turret state mismatch after branching to line_a")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 换线后不能回头 (尝试切到 line_b 必须被拒绝)
+	var reverse_check := MatchState.can_upgrade_turret(turret, "line_b")
+	if reverse_check.get("success", false):
+		printerr("FAILED: Turret must NOT be able to switch to line_b after picking line_a!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 5. 验证特效：次氯酸减缓破门速度
+	turret._fire_at_invader()
+	if invader.slow_break_timer <= 0.0:
+		printerr("FAILED: Hypochlorous did not apply slow_break_timer")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 验证特效：硫酸剥离抗性
+	var turret_sulfuric := SilicicTurret.new()
+	grid.add_turret(Vector2i(5, 7), turret_sulfuric)
+	turret_sulfuric.init_turret(Vector2i(5, 7), invader, grid)
+	turret_sulfuric.substance = "sulfuric"
+	turret_sulfuric.rank = 1
+	turret_sulfuric.branch_line = "line_b"
+	turret_sulfuric.apply_stats()
+	turret_sulfuric._fire_at_invader()
+	if invader.strip_resist_timer <= 0.0:
+		printerr("FAILED: Sulfuric did not apply strip_resist_timer")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 验证特效：氢硫酸水洼 DoT
+	var turret_hydro := SilicicTurret.new()
+	grid.add_turret(Vector2i(6, 7), turret_hydro)
+	turret_hydro.init_turret(Vector2i(6, 7), invader, grid)
+	turret_hydro.substance = "hydrosulfuric"
+	turret_hydro.rank = 1
+	turret_hydro.branch_line = "line_a"
+	turret_hydro.apply_stats()
+	turret_hydro._fire_at_invader()
+	if invader.puddle_timer <= 0.0:
+		printerr("FAILED: Hydrosulfuric did not apply puddle_timer")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	print("PASS: Phase 2 acid tree verified: Stepwise upgrades, capstone titles, no-plant branch lock, branch irreversibility, and branch specials.")
+	invader.queue_free()
+	grid.queue_free()
+	return true
+
 
 func _test_eject_non_owner_when_room_claimed() -> bool:
 	print("\n[TEST 7] Testing Non-Owner Ejection on Room Claim...")

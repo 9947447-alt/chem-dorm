@@ -414,6 +414,220 @@ func buy_and_place_building(room_id: String, item_id: String, actor_id: String, 
 	print("建造成功: 在 %s 建造 %s" % [cell, item.get("name", "")])
 	return true
 
+# --- 酸树体系与换线规则 ---
+const SUBSTANCE_NAMES: Dictionary = {
+	"silicic": "硅酸",
+	"carbonate": "碳酸",
+	"hypochlorous": "次氯酸",
+	"hydrosulfuric": "氢硫酸",
+	"hydrofluoric": "氢氟酸",
+	"hydrochloric": "盐酸",
+	"sulfuric": "硫酸",
+	"perchloric": "高氯酸",
+	"fluoroantimonic": "氟锑酸"
+}
+
+const CAPSTONE_NAMES: Dictionary = {
+	"silicic": "胶幕",
+	"carbonate": "沸泉",
+	"hypochlorous": "漂白",
+	"hydrosulfuric": "硫沼",
+	"hydrofluoric": "蚀晶",
+	"hydrochloric": "盐雾",
+	"sulfuric": "发烟",
+	"perchloric": "爆氧",
+	"fluoroantimonic": "魔酸"
+}
+
+func get_turret_display_name(substance: String, rank: int) -> String:
+	var s_name: String = SUBSTANCE_NAMES.get(substance, substance)
+	var roman_list: Array[String] = ["", "I", "II", "III", "IV", "V"]
+	var r_str: String = roman_list[rank] if rank >= 1 and rank <= 5 else str(rank)
+	if rank >= 5:
+		var cap: String = CAPSTONE_NAMES.get(substance, "")
+		return "%s V (冠名: %s)" % [s_name, cap]
+	return "%s %s" % [s_name, r_str]
+
+func get_turret_stats(substance: String, rank: int) -> Dictionary:
+	var t_range: float = 4.0
+	var t_interval: float = 0.8
+	var t_damage: int = 25
+
+	match substance:
+		"silicic":
+			t_range = 4.0
+			t_interval = 0.8
+			t_damage = 25 + (rank - 1) * 15 # 25..85
+		"carbonate":
+			t_range = 4.5
+			t_interval = 0.75
+			t_damage = 110 + (rank - 1) * 25 # 110..210
+		"hypochlorous":
+			t_range = 5.0
+			t_interval = 0.7
+			t_damage = 240 + (rank - 1) * 40 # 240..400 (减速拆门)
+		"hydrosulfuric":
+			t_range = 5.5
+			t_interval = 0.65
+			t_damage = 420 + (rank - 1) * 60 # 420..660 (地面水洼DoT)
+		"hydrofluoric":
+			t_range = 6.0
+			t_interval = 0.6
+			t_damage = 700 + (rank - 1) * 100 # 700..1100 (破门增伤)
+		"hydrochloric":
+			t_range = 7.5 # 超长射程
+			t_interval = 0.35 # 超快射速
+			t_damage = 180 + (rank - 1) * 35 # 180..320
+		"sulfuric":
+			t_range = 6.0
+			t_interval = 0.6
+			t_damage = 380 + (rank - 1) * 60 # 380..620 (剥离抗性)
+		"perchloric":
+			t_range = 6.5
+			t_interval = 0.5 # 爆发连射
+			t_damage = 450 + (rank - 1) * 70 # 450..730
+		"fluoroantimonic":
+			t_range = 8.0 # 隔门穿透
+			t_interval = 0.5
+			t_damage = 800 + (rank - 1) * 150 # 800..1400
+
+	return {
+		"range": t_range,
+		"interval": t_interval,
+		"damage": t_damage
+	}
+
+func get_next_turret_upgrade(substance: String, rank: int, current_branch: String, chosen_branch: String = "") -> Dictionary:
+	if (substance == "hydrofluoric" or substance == "fluoroantimonic") and rank >= 5:
+		return {"can_upgrade": false, "reason": "已达终极物质封顶"}
+
+	var next_substance: String = substance
+	var next_rank: int = rank + 1
+	var next_branch: String = current_branch
+	var cost_m: int = 0
+	var cost_f: int = 0
+
+	if rank < 5:
+		cost_m = 50 + rank * 30
+		if current_branch != "":
+			cost_f = 5 * rank
+	else:
+		# rank == 5, 晋级到下一物质 I
+		next_rank = 1
+		if substance == "silicic":
+			next_substance = "carbonate"
+			cost_m = 250
+			cost_f = 0
+		elif substance == "carbonate":
+			# 换线分支节点
+			if chosen_branch == "":
+				return {
+					"can_upgrade": false,
+					"reason": "请选择换线路线: line_a 或 line_b",
+					"is_branch_point": true
+				}
+			if chosen_branch == "line_a":
+				next_substance = "hypochlorous"
+				next_branch = "line_a"
+				cost_m = 500
+				cost_f = 20
+			elif chosen_branch == "line_b":
+				next_substance = "hydrochloric"
+				next_branch = "line_b"
+				cost_m = 500
+				cost_f = 20
+			else:
+				return {"can_upgrade": false, "reason": "未知分支路线"}
+		elif substance == "hypochlorous":
+			next_substance = "hydrosulfuric"
+			cost_m = 900
+			cost_f = 40
+		elif substance == "hydrosulfuric":
+			next_substance = "hydrofluoric"
+			cost_m = 1600
+			cost_f = 80
+		elif substance == "hydrochloric":
+			next_substance = "sulfuric"
+			cost_m = 900
+			cost_f = 40
+		elif substance == "sulfuric":
+			next_substance = "perchloric"
+			cost_m = 1600
+			cost_f = 80
+		elif substance == "perchloric":
+			next_substance = "fluoroantimonic"
+			cost_m = 2800
+			cost_f = 150
+
+	return {
+		"can_upgrade": true,
+		"next_substance": next_substance,
+		"next_rank": next_rank,
+		"next_branch": next_branch,
+		"cost_money": cost_m,
+		"cost_feedstock": cost_f,
+		"is_branch_point": (substance == "carbonate" and rank >= 5)
+	}
+
+func can_upgrade_turret(turret: SilicicTurret, chosen_branch: String = "") -> Dictionary:
+	if turret == null:
+		return {"success": false, "reason": "炮台不存在"}
+
+	# 检查是否在换线节点且房间无化工厂
+	if turret.substance == "carbonate" and turret.rank >= 5:
+		if not has_chem_plant(turret.room_id):
+			return {"success": false, "reason": "无厂则酸树停在碳酸 V，不能换线"}
+
+	# 换线后不能回头
+	if turret.branch_line != "":
+		if chosen_branch != "" and chosen_branch != turret.branch_line:
+			return {"success": false, "reason": "换线后不能回头"}
+
+	var up_info: Dictionary = get_next_turret_upgrade(turret.substance, turret.rank, turret.branch_line, chosen_branch)
+	if not up_info.get("can_upgrade", false):
+		return {"success": false, "reason": up_info.get("reason", "无法升级")}
+
+	var owner: String = get_room_owner(turret.room_id)
+	if owner == "":
+		owner = "player"
+	var cost_m: int = up_info.get("cost_money", 0)
+	var cost_f: int = up_info.get("cost_feedstock", 0)
+
+	if get_actor_money(owner) < cost_m:
+		return {"success": false, "reason": "金钱不足 (需要 %d)" % cost_m}
+	if get_actor_feedstock(owner) < cost_f:
+		return {"success": false, "reason": "原料不足 (需要 %d)" % cost_f}
+
+	up_info["success"] = true
+	return up_info
+
+func upgrade_turret(turret: SilicicTurret, chosen_branch: String = "") -> bool:
+	var check: Dictionary = can_upgrade_turret(turret, chosen_branch)
+	if not check.get("success", false):
+		print("炮台升级失败: ", check.get("reason", ""))
+		return false
+
+	var owner: String = get_room_owner(turret.room_id)
+	if owner == "":
+		owner = "player"
+
+	var cost_m: int = check.get("cost_money", 0)
+	var cost_f: int = check.get("cost_feedstock", 0)
+
+	if not spend_actor_money(owner, cost_m):
+		return false
+	if cost_f > 0 and not spend_actor_feedstock(owner, cost_f):
+		add_actor_money(owner, cost_m)
+		return false
+
+	turret.substance = check.get("next_substance", turret.substance)
+	turret.rank = check.get("next_rank", turret.rank)
+	turret.branch_line = check.get("next_branch", turret.branch_line)
+	turret.apply_stats()
+	print("炮台升级成功: %s" % [get_turret_display_name(turret.substance, turret.rank)])
+	return true
+
+
 func get_door_hp(room_id: String) -> int:
 	return door_hp.get(room_id, DOOR_MAX_HP)
 
