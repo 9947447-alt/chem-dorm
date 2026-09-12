@@ -19,6 +19,7 @@ func _ready() -> void:
 	success = success and _test_phase_4_invader_system()
 	success = success and _test_phase_5_ally_and_hightech()
 	success = success and _test_phase_6_hud_and_full_regression()
+	success = success and _test_cell_menu_door_hp_bar_and_popups()
 	success = success and _test_eject_non_owner_when_room_claimed()
 	success = success and _test_income_generation()
 	success = success and _test_silicic_i_placement_rules()
@@ -1655,42 +1656,12 @@ func _test_phase_6_hud_and_full_regression() -> bool:
 		main_scene.queue_free()
 		return false
 
-	# 3. 验证快捷建造栏交互（选择化工厂）
-	hud._select_build("chem_plant", "化工厂")
-	if main_scene.current_build_selection != "chem_plant":
-		printerr("FAILED: Selecting chem_plant did not update current_build_selection in main_scene")
+	if hud.label_hint == null or not hud.label_hint.text.contains("WASD") or not hud.label_hint.text.contains("左键"):
+		printerr("FAILED: HUD hint line missing WASD / 左键 instructions: ", hud.label_hint.text if hud.label_hint != null else "null")
 		main_scene.queue_free()
 		return false
 
-	# 验证七种矿切换，且 HUD 标价与 BUILD_CATALOG 一致
-	var mine_keys: Array[String] = ["iron_mine", "tungsten_mine", "molybdenum_mine", "sulfur_mine", "antimony_mine", "gold_mine", "uranium_mine"]
-	hud.current_selection = "turret"
-	hud.current_mine_idx = 0
-	for m_key in mine_keys:
-		hud._on_btn_cycle_mine_pressed()
-		var catalog_cost: int = int(MatchState.BUILD_CATALOG[m_key]["cost_money"])
-		if hud.current_selection != m_key:
-			printerr("FAILED: Mine cycling expected %s got %s" % [m_key, hud.current_selection])
-			main_scene.queue_free()
-			return false
-		if not hud.btn_build_iron_mine.text.contains("$%d" % catalog_cost):
-			printerr("FAILED: HUD mine price for %s must match BUILD_CATALOG %d, button: %s" % [m_key, catalog_cost, hud.btn_build_iron_mine.text])
-			main_scene.queue_free()
-			return false
-	if not mine_keys.has(hud.current_selection):
-		printerr("FAILED: Mine cycling failed to select a valid mine!")
-		main_scene.queue_free()
-		return false
-
-	# 验证分支切换（Line A <-> Line B）
-	hud.selected_branch_line = "line_a"
-	hud._on_btn_toggle_branch_pressed()
-	if hud.selected_branch_line != "line_b":
-		printerr("FAILED: Branch toggle button did not switch to line_b!")
-		main_scene.queue_free()
-		return false
-
-	# 在房间内部空格建造化工厂
+	# 3. 验证己房空格仍可通过建造 API 扣费落建筑（菜单执行走同一路径）
 	var plant_cell := Vector2i(5, 5)
 	if not main_scene.try_build_item(plant_cell, "chem_plant"):
 		printerr("FAILED: Failed to build chem_plant via main_scene.try_build_item")
@@ -1701,15 +1672,7 @@ func _test_phase_6_hud_and_full_regression() -> bool:
 		main_scene.queue_free()
 		return false
 
-	# 4. 验证点击升门按钮
-	var old_rank: int = MatchState.get_door_rank("room_101")
-	hud._on_btn_upgrade_door_pressed()
-	if MatchState.get_door_rank("room_101") != old_rank + 1:
-		printerr("FAILED: Door upgrade from HUD button failed!")
-		main_scene.queue_free()
-		return false
-
-	# 5. 验证全场对局胜负规则闭环：
+	# 4. 验证全场对局胜负规则闭环：
 	# (a) 龟缩高防门不击杀绝不胜
 	MatchState.invader_hp = 200
 	if MatchState.game_result == MatchState.GameResult.VICTORY:
@@ -1741,12 +1704,289 @@ func _test_phase_6_hud_and_full_regression() -> bool:
 		main_scene.queue_free()
 		return false
 
-	print("PASS: Phase 6 verified: Full HUD status, build toolbar selections, door upgrade button, and end-to-end victory/defeat loop.")
+	print("PASS: Phase 6 verified: Full HUD status, hint line, build API, and end-to-end victory/defeat loop.")
 	main_scene.queue_free()
 	return true
 
 
 
+
+func _menu_item_by_id(items: Array, item_id: String) -> Dictionary:
+	for it in items:
+		if str(it.get("id", "")) == item_id:
+			return it
+	return {}
+
+func _menu_index_by_id(items: Array, item_id: String) -> int:
+	for i in items.size():
+		if str(items[i].get("id", "")) == item_id:
+			return i
+	return -1
+
+func _test_cell_menu_door_hp_bar_and_popups() -> bool:
+	print("\n[TEST CellMenu] Testing cell dropdown, disabled reasons, door HP bar, production popups...")
+	MatchState.reset_match()
+	var main_scene: MainGame = load("res://scenes/main.tscn").instantiate()
+	add_child(main_scene)
+
+	var grid: GridMapManager = main_scene.grid_manager
+	var corridor: Vector2i = Vector2i(8, 13)
+	var empty_101: Vector2i = Vector2i(5, 5)
+	var empty_102: Vector2i = Vector2i(16, 6)
+	var door_101: Vector2i = Vector2i(6, 12)
+	var starter_101: Vector2i = Vector2i(3, 4)
+
+	# 1. 任意格左键必出菜单，包括走廊
+	main_scene.handle_cell_click(corridor)
+	if not main_scene.cell_menu_open or main_scene.current_menu_items.is_empty():
+		printerr("FAILED: Corridor click must open a non-empty menu")
+		main_scene.queue_free()
+		return false
+	var iron_cor: Dictionary = _menu_item_by_id(main_scene.current_menu_items, "build:iron_mine")
+	if iron_cor.is_empty() or iron_cor.get("enabled", true) or str(iron_cor.get("reason", "")) != "走廊不能建造":
+		printerr("FAILED: Corridor build items must be disabled with 走廊不能建造, got: ", iron_cor)
+		main_scene.queue_free()
+		return false
+
+	# 2. 未占房空格仍出菜单，建造项禁用写 未占房
+	main_scene.handle_cell_click(empty_101)
+	if not main_scene.cell_menu_open or main_scene.current_menu_items.is_empty():
+		printerr("FAILED: Unclaimed empty cell must still open a menu")
+		main_scene.queue_free()
+		return false
+	var iron_empty: Dictionary = _menu_item_by_id(main_scene.current_menu_items, "build:iron_mine")
+	var turret_empty: Dictionary = _menu_item_by_id(main_scene.current_menu_items, "build:silicic_turret_1")
+	if iron_empty.is_empty() or turret_empty.is_empty():
+		printerr("FAILED: Empty cell menu missing catalog build items")
+		main_scene.queue_free()
+		return false
+	if iron_empty.get("enabled", true) or str(iron_empty.get("reason", "")) != "未占房":
+		printerr("FAILED: Unclaimed empty build item must be disabled with 未占房, got: ", iron_empty)
+		main_scene.queue_free()
+		return false
+	var catalog_iron: int = int(MatchState.BUILD_CATALOG["iron_mine"]["cost_money"])
+	if not str(iron_empty.get("label", "")).contains("$%d" % catalog_iron):
+		printerr("FAILED: Menu mine price must match BUILD_CATALOG, label: ", iron_empty.get("label", ""))
+		main_scene.queue_free()
+		return false
+	var catalog_turret: int = int(MatchState.BUILD_CATALOG["silicic_turret_1"]["cost_money"])
+	if int(turret_empty.get("cost_money", -1)) != catalog_turret:
+		printerr("FAILED: Turret menu cost must match BUILD_CATALOG")
+		main_scene.queue_free()
+		return false
+
+	# 3. 只开菜单 / 关闭不扣费、不占格
+	MatchState.money = catalog_iron
+	main_scene.handle_cell_click(empty_101)
+	if MatchState.money != catalog_iron:
+		printerr("FAILED: Opening the menu must not charge")
+		main_scene.queue_free()
+		return false
+	main_scene.close_cell_menu()
+	if main_scene.cell_menu_open:
+		printerr("FAILED: close_cell_menu / Esc path must close without charging")
+		main_scene.queue_free()
+		return false
+	if MatchState.money != catalog_iron or MatchState.cell_to_building.has(empty_101):
+		printerr("FAILED: Closing the menu must not charge or place a building")
+		main_scene.queue_free()
+		return false
+	var iron_idx: int = _menu_index_by_id(main_scene.current_menu_items, "build:iron_mine")
+	if main_scene.execute_menu_item(iron_idx):
+		printerr("FAILED: Disabled unclaimed build must not execute")
+		main_scene.queue_free()
+		return false
+	if MatchState.cell_to_building.has(empty_101):
+		printerr("FAILED: Disabled menu item must not occupy the cell")
+		main_scene.queue_free()
+		return false
+
+	# 4. 非己房空格：菜单仍在，建造项禁用 非己房
+	MatchState.claim_room("room_101", "player")
+	MatchState.claim_room("room_102", "ally_1")
+	MatchState.money = catalog_iron
+	main_scene.handle_cell_click(empty_102)
+	if main_scene.current_menu_items.is_empty():
+		printerr("FAILED: Non-owned empty cell must still open a menu")
+		main_scene.queue_free()
+		return false
+	var iron_foreign: Dictionary = _menu_item_by_id(main_scene.current_menu_items, "build:iron_mine")
+	if iron_foreign.get("enabled", true) or str(iron_foreign.get("reason", "")) != "非己房":
+		printerr("FAILED: Non-owned empty build item must be disabled with 非己房, got: ", iron_foreign)
+		main_scene.queue_free()
+		return false
+
+	# 5. 己房空格钱不够：显示 钱不够；给钱后选一项才占格扣费
+	MatchState.money = 0
+	main_scene.handle_cell_click(empty_101)
+	var iron_poor: Dictionary = _menu_item_by_id(main_scene.current_menu_items, "build:iron_mine")
+	if iron_poor.get("enabled", true) or str(iron_poor.get("reason", "")) != "钱不够":
+		printerr("FAILED: Owned empty with no money must disable with 钱不够, got: ", iron_poor)
+		main_scene.queue_free()
+		return false
+	MatchState.money = catalog_iron
+	main_scene.handle_cell_click(empty_101)
+	if MatchState.money != catalog_iron:
+		printerr("FAILED: Reopening menu after funding must not charge")
+		main_scene.queue_free()
+		return false
+	iron_idx = _menu_index_by_id(main_scene.current_menu_items, "build:iron_mine")
+	var iron_ready: Dictionary = _menu_item_by_id(main_scene.current_menu_items, "build:iron_mine")
+	if not iron_ready.get("enabled", false):
+		printerr("FAILED: Owned empty with enough money must enable iron mine, got: ", iron_ready)
+		main_scene.queue_free()
+		return false
+	if not main_scene.execute_menu_item(iron_idx):
+		printerr("FAILED: Selecting an enabled build item must succeed")
+		main_scene.queue_free()
+		return false
+	if MatchState.money != 0:
+		printerr("FAILED: Selecting a build item must deduct BUILD_CATALOG cost, remaining: ", MatchState.money)
+		main_scene.queue_free()
+		return false
+	if not MatchState.cell_to_building.has(empty_101):
+		printerr("FAILED: Selecting a build item must occupy the cell")
+		main_scene.queue_free()
+		return false
+	if main_scene.cell_menu_open:
+		printerr("FAILED: Menu should close after a successful selection")
+		main_scene.queue_free()
+		return false
+
+	# 6. 门格菜单 + 已封顶；起步格菜单
+	main_scene.handle_cell_click(door_101)
+	var door_item: Dictionary = _menu_item_by_id(main_scene.current_menu_items, "upgrade_door")
+	if door_item.is_empty():
+		printerr("FAILED: Door cell must show upgrade_door menu item")
+		main_scene.queue_free()
+		return false
+	MatchState.door_kind["room_101"] = "ion_gate"
+	MatchState.door_rank["room_101"] = 5
+	main_scene.handle_cell_click(door_101)
+	door_item = _menu_item_by_id(main_scene.current_menu_items, "upgrade_door")
+	if door_item.get("enabled", true) or str(door_item.get("reason", "")) != "已封顶":
+		printerr("FAILED: Ion gate V door upgrade must be disabled with 已封顶, got: ", door_item)
+		main_scene.queue_free()
+		return false
+	MatchState.door_kind["room_101"] = "honeycomb"
+	MatchState.door_rank["room_101"] = 1
+	main_scene.handle_cell_click(starter_101)
+	var starter_item: Dictionary = _menu_item_by_id(main_scene.current_menu_items, "upgrade_starter")
+	if starter_item.is_empty():
+		printerr("FAILED: Starter cell must show upgrade_starter menu item")
+		main_scene.queue_free()
+		return false
+
+	# 7. 无厂不能换线
+	var turret_cell := Vector2i(6, 6)
+	var turret := SilicicTurret.new()
+	turret.substance = "carbonate"
+	turret.rank = 5
+	turret.branch_line = ""
+	turret.room_id = "room_101"
+	grid.add_turret(turret_cell, turret)
+	main_scene.handle_cell_click(turret_cell)
+	var line_a: Dictionary = _menu_item_by_id(main_scene.current_menu_items, "switch_line:line_a")
+	var line_b: Dictionary = _menu_item_by_id(main_scene.current_menu_items, "switch_line:line_b")
+	if line_a.is_empty() or line_b.is_empty():
+		printerr("FAILED: Carbonate V turret must show both branch switch items")
+		main_scene.queue_free()
+		return false
+	if line_a.get("enabled", true) or str(line_a.get("reason", "")) != "无厂不能换线":
+		printerr("FAILED: Branch switch without plant must be disabled with 无厂不能换线, got: ", line_a)
+		main_scene.queue_free()
+		return false
+
+	# 8. 门血条：满血、掉血变短、破门后空
+	if not is_equal_approx(MatchState.get_door_hp_bar_ratio("room_101"), 1.0):
+		printerr("FAILED: Intact door HP bar ratio should be 1, got: ", MatchState.get_door_hp_bar_ratio("room_101"))
+		main_scene.queue_free()
+		return false
+	var full_w: float = grid.get_door_hp_bar_fill_width("room_101")
+	if not is_equal_approx(full_w, float(GridMapManager.TILE_SIZE)):
+		printerr("FAILED: Full door bar width should equal TILE_SIZE, got: ", full_w)
+		main_scene.queue_free()
+		return false
+	MatchState.damage_door("room_101", 40)
+	var damaged_ratio: float = MatchState.get_door_hp_bar_ratio("room_101")
+	var damaged_w: float = grid.get_door_hp_bar_fill_width("room_101")
+	if damaged_ratio >= 1.0 or damaged_w >= full_w:
+		printerr("FAILED: Damaged door bar must shorten. ratio=%s width=%s" % [damaged_ratio, damaged_w])
+		main_scene.queue_free()
+		return false
+	MatchState.damage_door("room_101", MatchState.get_door_hp("room_101"))
+	if not MatchState.is_door_broken("room_101"):
+		printerr("FAILED: Door should be broken after remaining HP removed")
+		main_scene.queue_free()
+		return false
+	if MatchState.get_door_hp_bar_ratio("room_101") != 0.0 or grid.get_door_hp_bar_fill_width("room_101") != 0.0:
+		printerr("FAILED: Broken door HP bar must be empty")
+		main_scene.queue_free()
+		return false
+
+	# 9. 真实入账才飘字：起步矿金币、矿山金币、化工厂原料；未到结算不刷
+	var popups: Array = []
+	var on_pop := func(cell: Vector2i, kind: String, amount: int) -> void:
+		popups.append({"cell": cell, "kind": kind, "amount": amount})
+	MatchState.production_popup.connect(on_pop)
+	MatchState.starter_income_timer["room_101"] = 0.0
+	MatchState.building_income_timer["room_101"] = 0.0
+	popups.clear()
+	MatchState._process(0.2)
+	if not popups.is_empty():
+		printerr("FAILED: Production popup must not fire every frame before settlement, got: ", popups)
+		main_scene.queue_free()
+		return false
+
+	MatchState._process(MatchState.STARTER_INCOME_INTERVAL)
+	var starter_pop: Dictionary = {}
+	for p in popups:
+		if str(p.get("kind", "")) == "money" and p.get("cell", Vector2i.ZERO) == starter_101:
+			starter_pop = p
+			break
+	if starter_pop.is_empty() or int(starter_pop.get("amount", 0)) <= 0:
+		printerr("FAILED: Starter settlement must emit 金币 popup at starter cell, got: ", popups)
+		main_scene.queue_free()
+		return false
+
+	var plant_cell2 := Vector2i(5, 6)
+	MatchState.money = 5000
+	if not MatchState.buy_and_place_building("room_101", "chem_plant", "player", plant_cell2):
+		printerr("FAILED: Could not place chem plant for popup test")
+		main_scene.queue_free()
+		return false
+	MatchState.building_income_timer["room_101"] = 0.0
+	popups.clear()
+	grid.production_popups.clear()
+	MatchState._process(MatchState.STARTER_INCOME_INTERVAL)
+	var mine_pop: Dictionary = {}
+	var plant_pop: Dictionary = {}
+	for p in popups:
+		if str(p.get("kind", "")) == "money" and p.get("cell", Vector2i.ZERO) == empty_101:
+			mine_pop = p
+		if str(p.get("kind", "")) == "feedstock" and p.get("cell", Vector2i.ZERO) == plant_cell2:
+			plant_pop = p
+	if mine_pop.is_empty() or int(mine_pop.get("amount", 0)) <= 0:
+		printerr("FAILED: Money mine settlement must emit 金币 popup on the mine cell, got: ", popups)
+		main_scene.queue_free()
+		return false
+	if plant_pop.is_empty() or int(plant_pop.get("amount", 0)) <= 0:
+		printerr("FAILED: Chem plant settlement must emit 原料 popup on the plant cell, got: ", popups)
+		main_scene.queue_free()
+		return false
+	if grid.production_popups.is_empty():
+		printerr("FAILED: Grid should spawn visible production popups on settlement")
+		main_scene.queue_free()
+		return false
+	grid._process(grid.PRODUCTION_POPUP_LIFETIME + 0.05)
+	if not grid.production_popups.is_empty():
+		printerr("FAILED: Production popups should expire after ~0.8s")
+		main_scene.queue_free()
+		return false
+
+	print("PASS: Cell menu opens on every tile, disables with reasons, charges only on select; door bar shortens; popups only on real credit.")
+	main_scene.queue_free()
+	return true
 
 func _test_eject_non_owner_when_room_claimed() -> bool:
 	print("\n[TEST 7] Testing Non-Owner Ejection on Room Claim...")

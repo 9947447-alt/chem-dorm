@@ -10,18 +10,16 @@ extends Node2D
 var player: PlayerActor
 var allies: Array[AllyBot] = []
 var invader: InvaderActor
-var current_build_selection: String = "turret"
+var selected_cell: Vector2i = Vector2i(-9999, -9999)
+var cell_menu_open: bool = false
+var current_menu_items: Array = []
 
 func _ready() -> void:
 	_setup_camera()
 	_spawn_all_actors()
 	if hud != null:
-		hud.build_selection_changed.connect(_on_build_selection_changed)
-		hud.upgrade_door_requested.connect(_try_upgrade_player_door)
-		hud.upgrade_turret_requested.connect(_try_upgrade_player_turret)
-
-func _on_build_selection_changed(item_id: String) -> void:
-	current_build_selection = item_id
+		hud.cell_menu_item_chosen.connect(_on_cell_menu_item_chosen)
+		hud.cell_menu_closed.connect(_on_cell_menu_closed)
 
 func _setup_camera() -> void:
 	# Center camera to display the whole dormitory (approx 38x28 tiles)
@@ -84,34 +82,80 @@ func _spawn_all_actors() -> void:
 		bot.start_ai()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+		if cell_menu_open:
+			close_cell_menu()
+			get_viewport().set_input_as_handled()
+		return
+
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		if cell_menu_open:
+			close_cell_menu()
+			get_viewport().set_input_as_handled()
+			return
 		var mouse_pos: Vector2 = get_global_mouse_position()
 		var cell: Vector2i = grid_manager.world_to_cell(mouse_pos)
-		
-		# 检查是否点击了炮台 -> 尝试升级炮台
-		if grid_manager.turrets.has(cell):
-			_upgrade_turret_at(cell)
-			return
+		handle_cell_click(cell)
+		get_viewport().set_input_as_handled()
 
-		# 点击化工厂 -> 原地升级 I–XV
-		var existing_b: Dictionary = MatchState.get_building_at_cell(cell)
-		if existing_b.get("id", "") == "chem_plant":
-			MatchState.upgrade_chem_plant(existing_b.get("room_id", ""), "player", cell)
-			return
+func handle_cell_click(cell: Vector2i) -> void:
+	selected_cell = cell
+	if grid_manager != null:
+		grid_manager.selected_cell = cell
+		grid_manager.queue_redraw()
+	current_menu_items = CellMenu.items_for_cell(cell, grid_manager, "player")
+	cell_menu_open = true
+	if hud != null:
+		hud.show_cell_menu(current_menu_items, _menu_screen_pos())
 
-		# 检查是否点击了舱门 -> 尝试升级门
-		var p_room_id := MatchState.get_player_owned_room_id()
-		if p_room_id != "":
-			var p_room := grid_manager.get_room_by_id(p_room_id)
-			if p_room != null and cell == p_room.door_cell:
-				_try_upgrade_player_door()
-				return
+func close_cell_menu() -> void:
+	cell_menu_open = false
+	if hud != null:
+		hud.hide_cell_menu()
 
-		# 建造选定项目
-		if current_build_selection == "turret":
-			try_build_silicic_turret(cell)
-		else:
-			try_build_item(cell, current_build_selection)
+func execute_menu_item(index: int) -> bool:
+	if index < 0 or index >= current_menu_items.size():
+		close_cell_menu()
+		return false
+	var item: Dictionary = current_menu_items[index]
+	if not item.get("enabled", false):
+		return false
+	var cell: Vector2i = selected_cell
+	var action: String = str(item.get("action", ""))
+	var ok: bool = false
+	match action:
+		"build_turret":
+			ok = try_build_silicic_turret(cell)
+		"build_item":
+			ok = try_build_item(cell, str(item.get("item_id", "")))
+		"upgrade_door":
+			var door_room: RoomData = grid_manager.get_room_at_cell(cell)
+			if door_room != null:
+				ok = MatchState.upgrade_door(door_room.room_id, "player")
+		"upgrade_starter":
+			var starter_room: RoomData = grid_manager.get_room_by_starter_cell(cell)
+			if starter_room != null:
+				ok = MatchState.upgrade_starter(starter_room.room_id, "player")
+		"upgrade_chem_plant":
+			var plant: Dictionary = MatchState.get_building_at_cell(cell)
+			ok = MatchState.upgrade_chem_plant(str(plant.get("room_id", "")), "player", cell)
+		"upgrade_turret":
+			if grid_manager.turrets.has(cell):
+				ok = MatchState.upgrade_turret(grid_manager.turrets[cell])
+		"switch_line":
+			if grid_manager.turrets.has(cell):
+				ok = MatchState.upgrade_turret(grid_manager.turrets[cell], str(item.get("branch", "")))
+	close_cell_menu()
+	return ok
+
+func _menu_screen_pos() -> Vector2:
+	return get_viewport().get_mouse_position()
+
+func _on_cell_menu_item_chosen(index: int) -> void:
+	execute_menu_item(index)
+
+func _on_cell_menu_closed() -> void:
+	cell_menu_open = false
 
 func try_build_silicic_turret(cell: Vector2i) -> bool:
 	var player_room_id: String = MatchState.get_player_owned_room_id()
@@ -135,11 +179,12 @@ func try_build_silicic_turret(cell: Vector2i) -> bool:
 		print("建造失败: 该格已有建筑")
 		return false
 
-	if MatchState.money < MatchState.TURRET_COST:
-		print("建造失败: 钱不够不能造塔 (需要 %d, 当前 %d)" % [MatchState.TURRET_COST, MatchState.money])
+	var turret_cost: int = int(MatchState.BUILD_CATALOG["silicic_turret_1"]["cost_money"])
+	if MatchState.money < turret_cost:
+		print("建造失败: 钱不够不能造塔 (需要 %d, 当前 %d)" % [turret_cost, MatchState.money])
 		return false
 
-	if MatchState.spend_money(MatchState.TURRET_COST):
+	if MatchState.spend_money(turret_cost):
 		var turret := SilicicTurret.new()
 		turret.name = "SilicicTurret_%d_%d" % [cell.x, cell.y]
 		turret.room_id = player_room_id
@@ -170,34 +215,3 @@ func try_build_item(cell: Vector2i, item_id: String) -> bool:
 		return false
 
 	return MatchState.buy_and_place_building(player_room_id, item_id, "player", cell)
-
-func _try_upgrade_player_door() -> void:
-	var p_room_id: String = MatchState.get_player_owned_room_id()
-	if p_room_id != "":
-		MatchState.upgrade_door(p_room_id, "player")
-
-func _upgrade_turret_at(cell: Vector2i) -> void:
-	if not grid_manager.turrets.has(cell):
-		return
-	var t: SilicicTurret = grid_manager.turrets[cell]
-	var can_up := MatchState.can_upgrade_turret(t)
-	if can_up.get("success", false):
-		MatchState.upgrade_turret(t)
-		return
-	if t.substance == "carbonate" and t.rank == 5 and t.branch_line == "":
-		var target_branch: String = hud.selected_branch_line if hud != null else "line_a"
-		var branch_check := MatchState.can_upgrade_turret(t, target_branch)
-		if branch_check.get("success", false):
-			MatchState.upgrade_turret(t, target_branch)
-		else:
-			print("换线失败: ", branch_check.get("reason", ""))
-
-func _try_upgrade_player_turret() -> void:
-	var p_room_id: String = MatchState.get_player_owned_room_id()
-	if p_room_id == "":
-		return
-	for t in grid_manager.turrets.values():
-		if t is SilicicTurret and t.room_id == p_room_id:
-			_upgrade_turret_at(t.grid_cell)
-			break
-

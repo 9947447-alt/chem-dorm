@@ -14,6 +14,7 @@ signal starter_hp_changed(room_id: String, current_hp: int, max_hp: int)
 signal invader_hp_changed(current_hp: int, max_hp: int)
 signal invader_level_up(character: String, new_level: int)
 signal invader_level_changed(new_level: int)
+signal production_popup(cell: Vector2i, kind: String, amount: int)
 
 enum Phase {
 	COUNTDOWN,
@@ -201,6 +202,7 @@ var room_owners: Dictionary = {} # String (room_id) -> String (actor_id)
 var room_locked: Dictionary = {} # String (room_id) -> bool
 var room_display_names: Dictionary = {} # String (room_id) -> String (display_name)
 var room_interior: Dictionary = {} # String (room_id) -> Rect2i
+var room_starter_cells: Dictionary = {} # String (room_id) -> Array (Vector2i)
 var player_room_id: String = "" # "" represents corridor/outside
 
 # 经济与建筑运行时状态
@@ -243,6 +245,7 @@ func reset_match(countdown_duration: float = 25.0) -> void:
 	room_locked.clear()
 	room_display_names.clear()
 	room_interior.clear()
+	room_starter_cells.clear()
 	player_room_id = ""
 	game_result = GameResult.NONE
 	door_hp.clear()
@@ -269,7 +272,7 @@ func reset_match(countdown_duration: float = 25.0) -> void:
 	invader_xp = 0
 	invader_status_text = ""
 
-func register_room(room_id: String, display_name: String = "", interior: Rect2i = Rect2i()) -> void:
+func register_room(room_id: String, display_name: String = "", interior: Rect2i = Rect2i(), starter_cells: Array = []) -> void:
 	if not room_owners.has(room_id):
 		room_owners[room_id] = ""
 		room_locked[room_id] = false
@@ -292,6 +295,8 @@ func register_room(room_id: String, display_name: String = "", interior: Rect2i 
 		room_display_names[room_id] = room_id
 	if interior.size.x > 0 and interior.size.y > 0:
 		room_interior[room_id] = interior
+	if not starter_cells.is_empty():
+		room_starter_cells[room_id] = starter_cells.duplicate()
 
 func get_roman_numeral(n: int) -> String:
 	if n >= 1 and n < ROMAN_NUMERALS.size():
@@ -979,6 +984,14 @@ func upgrade_door(room_id: String, actor_id: String = "player") -> bool:
 func get_door_hp(room_id: String) -> int:
 	return door_hp.get(room_id, get_door_max_hp(room_id))
 
+func get_door_hp_bar_ratio(room_id: String) -> float:
+	if is_door_broken(room_id):
+		return 0.0
+	var max_h: int = get_door_max_hp(room_id)
+	if max_h <= 0:
+		return 0.0
+	return clampf(float(get_door_hp(room_id)) / float(max_h), 0.0, 1.0)
+
 func get_door_armor(room_id: String) -> int:
 	return door_armor.get(room_id, 0)
 
@@ -1058,6 +1071,9 @@ func _process(delta: float) -> void:
 				var lvl: int = get_starter_level(r_id)
 				var payout: int = STARTER_INCOME_AMOUNT * lvl
 				add_actor_money(owner, payout)
+				var s_cells: Array = room_starter_cells.get(r_id, [])
+				if not s_cells.is_empty() and payout > 0:
+					production_popup.emit(s_cells[0], "money", payout)
 			starter_income_timer[r_id] = timer
 
 		# 2. 房间内其他建筑（矿山、化工厂）产出
@@ -1078,9 +1094,15 @@ func _process(delta: float) -> void:
 					if has_reg:
 						mult += 0.15
 					if m_inc > 0:
-						add_actor_money(owner, int(ceil(float(m_inc) * mult)))
+						var money_gain: int = int(ceil(float(m_inc) * mult))
+						add_actor_money(owner, money_gain)
+						if money_gain > 0:
+							production_popup.emit(b_cell, "money", money_gain)
 					if f_inc > 0:
-						add_actor_feedstock(owner, int(ceil(float(f_inc) * mult)))
+						var feed_gain: int = int(ceil(float(f_inc) * mult))
+						add_actor_feedstock(owner, feed_gain)
+						if feed_gain > 0:
+							production_popup.emit(b_cell, "feedstock", feed_gain)
 			building_income_timer[r_id] = b_timer
 
 		# 3. 舱门中段微量回血（未破损状态下自动恢复）

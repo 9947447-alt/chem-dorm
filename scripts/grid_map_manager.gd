@@ -27,6 +27,12 @@ var acid_puddles: Dictionary = {} # Vector2i -> Dictionary { "timer": float, "dp
 var astar_full: AStarGrid2D
 var astar_corridor: AStarGrid2D
 var turrets: Dictionary = {} # Vector2i -> SilicicTurret
+var selected_cell: Vector2i = Vector2i(-9999, -9999)
+var production_popups: Array[Dictionary] = []
+
+const PRODUCTION_POPUP_LIFETIME: float = 0.8
+const DOOR_HP_BAR_HEIGHT: float = 4.0
+const DOOR_HP_BAR_OFFSET_Y: float = 6.0
 
 func _ready() -> void:
 	_init_rooms()
@@ -34,9 +40,34 @@ func _ready() -> void:
 	_init_astar()
 	if not MatchState.building_added.is_connected(_on_building_added):
 		MatchState.building_added.connect(_on_building_added)
+	if not MatchState.production_popup.is_connected(_on_production_popup):
+		MatchState.production_popup.connect(_on_production_popup)
+	if not MatchState.door_hp_changed.is_connected(_on_door_hp_changed):
+		MatchState.door_hp_changed.connect(_on_door_hp_changed)
 	queue_redraw()
 
+func _on_production_popup(cell: Vector2i, kind: String, amount: int) -> void:
+	spawn_production_popup(cell, kind, amount)
+
+func _on_door_hp_changed(_room_id: String, _hp: int, _max_hp: int) -> void:
+	queue_redraw()
+
+func spawn_production_popup(cell: Vector2i, kind: String, amount: int) -> void:
+	if amount <= 0:
+		return
+	production_popups.append({
+		"cell": cell,
+		"kind": kind,
+		"amount": amount,
+		"age": 0.0
+	})
+	queue_redraw()
+
+func get_door_hp_bar_fill_width(room_id: String) -> float:
+	return float(TILE_SIZE) * MatchState.get_door_hp_bar_ratio(room_id)
+
 func _process(delta: float) -> void:
+	var need_redraw: bool = false
 	if not acid_puddles.is_empty():
 		var expired: Array = []
 		for c in acid_puddles.keys():
@@ -46,7 +77,20 @@ func _process(delta: float) -> void:
 		if not expired.is_empty():
 			for c in expired:
 				acid_puddles.erase(c)
-			queue_redraw()
+			need_redraw = true
+	if not production_popups.is_empty():
+		var remain: Array[Dictionary] = []
+		for p in production_popups:
+			p["age"] = float(p.get("age", 0.0)) + delta
+			if float(p["age"]) < PRODUCTION_POPUP_LIFETIME:
+				remain.append(p)
+		if remain.size() != production_popups.size():
+			need_redraw = true
+		else:
+			need_redraw = true
+		production_popups = remain
+	if need_redraw:
+		queue_redraw()
 
 func spawn_acid_puddle(cell: Vector2i, duration: float, dps: int) -> void:
 	acid_puddles[cell] = {
@@ -142,7 +186,7 @@ func _init_rooms() -> void:
 		rooms.append(r)
 		room_by_id[r.room_id] = r
 		room_by_door[r.door_cell] = r
-		MatchState.register_room(r.room_id, r.display_name, r.interior_rect)
+		MatchState.register_room(r.room_id, r.display_name, r.interior_rect, r.starter_cells)
 
 func _build_grid() -> void:
 	cells.clear()
@@ -409,6 +453,22 @@ func _draw() -> void:
 						draw_rect(rect, Color(0.18, 0.72, 0.65))
 						draw_rect(rect, Color(0.35, 0.95, 0.85), false, 2.0)
 
+	# 每扇舱门在门格上方画血条（按当前 HP/最大 HP 变短，破门后空条）
+	for r in rooms:
+		var door: Vector2i = r.door_cell
+		var bar_x: float = float(door.x * TILE_SIZE)
+		var bar_y: float = float(door.y * TILE_SIZE) - DOOR_HP_BAR_OFFSET_Y
+		var bar_bg := Rect2(bar_x, bar_y, float(TILE_SIZE), DOOR_HP_BAR_HEIGHT)
+		draw_rect(bar_bg, Color(0.08, 0.09, 0.10))
+		var fill_w: float = get_door_hp_bar_fill_width(r.room_id)
+		if fill_w > 0.0:
+			draw_rect(Rect2(bar_x, bar_y, fill_w, DOOR_HP_BAR_HEIGHT), Color(0.25, 0.85, 0.40))
+		draw_rect(bar_bg, Color(0.15, 0.18, 0.16), false, 1.0)
+
+	if cells.has(selected_cell):
+		var sel_rect := Rect2(selected_cell.x * TILE_SIZE, selected_cell.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+		draw_rect(sel_rect, Color(1.0, 0.9, 0.25), false, 2.0)
+
 	# Draw Room labels and metadata
 	var font := ThemeDB.fallback_font
 	var font_size := 12
@@ -497,4 +557,17 @@ func _draw() -> void:
 		draw_rect(pad_rect, Color(0.1, 0.6, 0.3, 0.35))
 		draw_rect(pad_rect, Color(0.2, 0.95, 0.4, 0.8), false, 2.0)
 		draw_string(font, Vector2(pad.x * TILE_SIZE + 4, pad.y * TILE_SIZE + TILE_SIZE - 8), "+", HORIZONTAL_ALIGNMENT_CENTER, TILE_SIZE - 8, 14, Color.GREEN)
+
+	# 真实入账飘字：金币 / 原料
+	for p in production_popups:
+		var p_cell: Vector2i = p.get("cell", Vector2i.ZERO)
+		var kind: String = str(p.get("kind", "money"))
+		var amount: int = int(p.get("amount", 0))
+		var t: float = clampf(float(p.get("age", 0.0)) / PRODUCTION_POPUP_LIFETIME, 0.0, 1.0)
+		var pos: Vector2 = cell_to_world(p_cell) + Vector2(-6.0, -10.0 - t * 16.0)
+		var dot_color: Color = Color(1.0, 0.82, 0.18) if kind == "money" else Color(0.72, 0.32, 0.95)
+		var prefix: String = "金币" if kind == "money" else "原料"
+		var alpha: float = 1.0 - t * 0.25
+		draw_circle(pos, 3.5, Color(dot_color.r, dot_color.g, dot_color.b, alpha))
+		draw_string(font, pos + Vector2(6, 4), "%s +%d" % [prefix, amount], HORIZONTAL_ALIGNMENT_LEFT, 80, 11, Color(1.0, 1.0, 1.0, alpha))
 
