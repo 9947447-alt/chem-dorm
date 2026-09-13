@@ -97,7 +97,7 @@ func _sync_status_text() -> void:
 	var text: String = " ".join(parts)
 	if text != MatchState.invader_status_text:
 		MatchState.invader_status_text = text
-		MatchState.invader_hp_changed.emit(MatchState.invader_hp, MatchState.INVADER_MAX_HP)
+		MatchState.invader_hp_changed.emit(MatchState.invader_hp, MatchState.get_invader_max_hp())
 
 func _ready() -> void:
 	super._ready()
@@ -165,11 +165,13 @@ func add_xp(amount: int) -> void:
 		return
 	invader_xp += amount
 	MatchState.invader_xp = invader_xp
-	while invader_xp >= invader_xp_to_next and invader_level < 15:
+	while invader_xp >= invader_xp_to_next and invader_level < MatchState.INVADER_LEVEL_CAP:
 		invader_xp -= invader_xp_to_next
+		var old_level: int = invader_level
 		invader_level += 1
 		invader_xp_to_next = int(round(float(invader_xp_to_next) * 1.35))
 		MatchState.invader_level = invader_level
+		MatchState.apply_invader_level_up_hp(old_level, invader_level)
 		MatchState.invader_level_up.emit(invader_character, invader_level)
 		MatchState.invader_level_changed.emit(invader_level)
 		print("敌人升级！当前等级: %d [%s]" % [invader_level, display_name])
@@ -246,7 +248,7 @@ func _process(delta: float) -> void:
 			take_damage(int(round(float(p_dps) * 0.5)))
 
 	# 检查低血量撤退至走廊回血点（全状态生效，包括入室拆起步矿）
-	if MatchState.invader_hp <= int(float(MatchState.INVADER_MAX_HP) * 0.35):
+	if MatchState.invader_hp <= int(float(MatchState.get_invader_max_hp()) * 0.35):
 		if invader_state == InvaderState.STOPPED_AT_DOOR or invader_state == InvaderState.APPROACHING_DOOR or invader_state == InvaderState.ATTACKING_STARTER or invader_state == InvaderState.ENTERING_ROOM:
 			_retreat_to_heal_pad()
 
@@ -273,12 +275,12 @@ func _process_healing(delta: float) -> void:
 	heal_tick_timer += delta
 	if heal_tick_timer >= 0.5:
 		heal_tick_timer -= 0.5
-		var new_hp: int = min(MatchState.INVADER_MAX_HP, MatchState.invader_hp + 15)
+		var new_hp: int = min(MatchState.get_invader_max_hp(), MatchState.invader_hp + 15)
 		MatchState.invader_hp = new_hp
-		MatchState.invader_hp_changed.emit(new_hp, MatchState.INVADER_MAX_HP)
+		MatchState.invader_hp_changed.emit(new_hp, MatchState.get_invader_max_hp())
 		queue_redraw()
 
-	if MatchState.invader_hp >= int(float(MatchState.INVADER_MAX_HP) * 0.9):
+	if MatchState.invader_hp >= int(float(MatchState.get_invader_max_hp()) * 0.9):
 		# 生命值恢复至安全线，重返战场
 		heal_tick_timer = 0.0
 		_pick_target_and_move()
@@ -478,7 +480,7 @@ func _draw() -> void:
 	var bar_w: float = 32.0
 	var bar_h: float = 4.0
 	var bar_y: float = -radius - 12.0
-	var hp_ratio: float = clampf(float(MatchState.invader_hp) / float(MatchState.INVADER_MAX_HP), 0.0, 1.0)
+	var hp_ratio: float = clampf(float(MatchState.invader_hp) / float(MatchState.get_invader_max_hp()), 0.0, 1.0)
 	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w, bar_h), Color(0.1, 0.1, 0.1))
 	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w * hp_ratio, bar_h), Color(0.9, 0.2, 0.2))
 	

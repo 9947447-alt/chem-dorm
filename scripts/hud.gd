@@ -46,6 +46,9 @@ func show_cell_menu(items: Array, screen_pos: Vector2) -> void:
 	for i in items.size():
 		var it: Dictionary = items[i]
 		var text: String = str(it.get("label", ""))
+		if str(it.get("action", "")) == "title" or str(it.get("id", "")) == "cell_title":
+			cell_popup.add_separator(text)
+			continue
 		if not it.get("enabled", false):
 			var reason: String = str(it.get("reason", ""))
 			if reason != "":
@@ -75,7 +78,7 @@ func _update_hud_display() -> void:
 	_update_countdown_label(MatchState.countdown_remaining)
 	_update_room_label(MatchState.player_room_id)
 	_update_door_hp_display()
-	_update_invader_hp_display(MatchState.invader_hp, MatchState.INVADER_MAX_HP)
+	_update_invader_hp_display(MatchState.invader_hp, MatchState.get_invader_max_hp())
 	_update_outcome_display()
 
 func _on_money_changed(amount: int) -> void:
@@ -138,7 +141,7 @@ func _on_invader_hp_changed(hp: int, max_hp: int) -> void:
 	_update_invader_hp_display(hp, max_hp)
 
 func _on_invader_level_changed(_level: int) -> void:
-	_update_invader_hp_display(MatchState.invader_hp, MatchState.INVADER_MAX_HP)
+	_update_invader_hp_display(MatchState.invader_hp, MatchState.get_invader_max_hp())
 
 func _update_invader_hp_display(hp: int, max_hp: int) -> void:
 	var char_title: String = "入侵者"

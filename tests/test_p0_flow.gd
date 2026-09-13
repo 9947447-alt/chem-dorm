@@ -1203,6 +1203,92 @@ func _test_phase_4_invader_system() -> bool:
 		grid.queue_free()
 		return false
 
+	# 3b. 升级提高 max HP，当前 HP 同步加上限增量（满血则 current = 新 max）
+	invader.invader_state = InvaderActor.InvaderState.STOPPED_AT_DOOR
+	invader.invader_level = 1
+	MatchState.invader_level = 1
+	invader.invader_xp = 0
+	invader.invader_xp_to_next = 40
+	MatchState.invader_hp = MatchState.get_invader_max_hp(1)
+	var hp_full_before: int = MatchState.invader_hp
+	var max_full_before: int = MatchState.get_invader_max_hp(1)
+	invader.add_xp(40)
+	if invader.invader_level != 2:
+		printerr("FAILED: Invader should reach level 2 after enough door XP")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	var max_after_full: int = MatchState.get_invader_max_hp()
+	if max_after_full <= max_full_before:
+		printerr("FAILED: Level-up must increase max HP. before=%d after=%d" % [max_full_before, max_after_full])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if MatchState.invader_hp <= hp_full_before:
+		printerr("FAILED: Full-HP level-up must increase current HP. before=%d after=%d" % [hp_full_before, MatchState.invader_hp])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if MatchState.invader_hp != max_after_full:
+		printerr("FAILED: Full-HP level-up must set current HP to new max. current=%d max=%d" % [MatchState.invader_hp, max_after_full])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	invader.invader_level = 1
+	MatchState.invader_level = 1
+	invader.invader_xp = 0
+	invader.invader_xp_to_next = 40
+	MatchState.invader_hp = 120
+	var hp_wounded_before: int = MatchState.invader_hp
+	invader.add_xp(40)
+	if MatchState.invader_hp <= hp_wounded_before:
+		printerr("FAILED: Wounded level-up must still increase current HP. before=%d after=%d" % [hp_wounded_before, MatchState.invader_hp])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	var retreat_line: int = int(float(MatchState.get_invader_max_hp()) * 0.35)
+	invader.invader_state = InvaderActor.InvaderState.STOPPED_AT_DOOR
+	if MatchState.invader_hp > retreat_line:
+		invader._process(0.1)
+		if invader.invader_state == InvaderActor.InvaderState.MOVING_TO_HEAL_PAD:
+			printerr("FAILED: 35%% retreat must use new max after level-up; HP %d should be above %d" % [MatchState.invader_hp, retreat_line])
+			invader.queue_free()
+			grid.queue_free()
+			return false
+
+	var l1_max: int = MatchState.get_invader_max_hp(1)
+	var l15_max: int = MatchState.get_invader_max_hp(15)
+	if l15_max < l1_max * 2:
+		printerr("FAILED: Level 1 to 15 HP spread is too small. L1=%d L15=%d" % [l1_max, l15_max])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	var silicic_iii: Dictionary = MatchState.get_turret_stats("silicic", 3)
+	var l1_window: float = 3.0 # L1→L2：40 XP / 15 每击 * 1.0s 间隔
+	var iii_shots: int = int(ceil(l1_window / float(silicic_iii["interval"])))
+	var iii_taken: int = int(silicic_iii["damage"]) * iii_shots
+	var l1_retreat: int = int(float(l1_max) * 0.35)
+	if l1_max - iii_taken <= l1_retreat:
+		printerr("FAILED: Silicic III must not force 35%% retreat in the L1-L2 window. max=%d taken=%d retreat_hp=%d" % [l1_max, iii_taken, l1_retreat])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	var glue: Dictionary = MatchState.get_turret_stats("silicic", 5)
+	var later_acid: Dictionary = MatchState.get_turret_stats("carbonate", 1)
+	var glue_dps: float = float(glue["damage"]) / float(glue["interval"])
+	var later_dps: float = float(later_acid["damage"]) / float(later_acid["interval"])
+	if float(l15_max) / (glue_dps + later_dps) > 20.0:
+		printerr("FAILED: Level 15 must still be killable by 胶幕+后段酸 within 20s. max=%d ttk=%f" % [l15_max, float(l15_max) / (glue_dps + later_dps)])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	invader.invader_state = InvaderActor.InvaderState.STOPPED_AT_DOOR
+	invader.invader_xp = 0
+	invader.invader_xp_to_next = 99999
+	MatchState.invader_hp = 10000
+
 	# 4. 验证四角色战斗技能真实调用与门控（不手算伪造）
 	# (A) 蚀岩 (rock_corroder): 真实测试 Lv 4 vs Lv 5 克制回血 vs Lv 10 斩击
 	invader.set_character("rock_corroder")
@@ -1711,6 +1797,12 @@ func _test_phase_6_hud_and_full_regression() -> bool:
 
 
 
+func _cell_menu_title(items: Array) -> String:
+	for it in items:
+		if str(it.get("id", "")) == "cell_title":
+			return str(it.get("label", ""))
+	return ""
+
 func _menu_item_by_id(items: Array, item_id: String) -> Dictionary:
 	for it in items:
 		if str(it.get("id", "")) == item_id:
@@ -1742,6 +1834,10 @@ func _test_cell_menu_door_hp_bar_and_popups() -> bool:
 		printerr("FAILED: Corridor click must open a non-empty menu")
 		main_scene.queue_free()
 		return false
+	if _cell_menu_title(main_scene.current_menu_items) != "走廊":
+		printerr("FAILED: Corridor menu title must be 走廊, got: ", _cell_menu_title(main_scene.current_menu_items))
+		main_scene.queue_free()
+		return false
 	var iron_cor: Dictionary = _menu_item_by_id(main_scene.current_menu_items, "build:iron_mine")
 	if iron_cor.is_empty() or iron_cor.get("enabled", true) or str(iron_cor.get("reason", "")) != "走廊不能建造":
 		printerr("FAILED: Corridor build items must be disabled with 走廊不能建造, got: ", iron_cor)
@@ -1752,6 +1848,10 @@ func _test_cell_menu_door_hp_bar_and_popups() -> bool:
 	main_scene.handle_cell_click(empty_101)
 	if not main_scene.cell_menu_open or main_scene.current_menu_items.is_empty():
 		printerr("FAILED: Unclaimed empty cell must still open a menu")
+		main_scene.queue_free()
+		return false
+	if _cell_menu_title(main_scene.current_menu_items) != "空地":
+		printerr("FAILED: Empty floor menu title must be 空地, got: ", _cell_menu_title(main_scene.current_menu_items))
 		main_scene.queue_free()
 		return false
 	var iron_empty: Dictionary = _menu_item_by_id(main_scene.current_menu_items, "build:iron_mine")
@@ -1852,8 +1952,25 @@ func _test_cell_menu_door_hp_bar_and_popups() -> bool:
 		printerr("FAILED: Menu should close after a successful selection")
 		main_scene.queue_free()
 		return false
+	main_scene.handle_cell_click(empty_101)
+	if _cell_menu_title(main_scene.current_menu_items) != "铁矿":
+		printerr("FAILED: Iron mine cell title must be 铁矿, got: ", _cell_menu_title(main_scene.current_menu_items))
+		main_scene.queue_free()
+		return false
 
 	# 6. 门格菜单 + 已封顶；起步格菜单
+	main_scene.handle_cell_click(door_101)
+	if _cell_menu_title(main_scene.current_menu_items) != "蜂巢闸 I":
+		printerr("FAILED: Default door title must be 蜂巢闸 I, got: ", _cell_menu_title(main_scene.current_menu_items))
+		main_scene.queue_free()
+		return false
+	MatchState.door_rank["room_101"] = 4
+	main_scene.handle_cell_click(door_101)
+	if _cell_menu_title(main_scene.current_menu_items) != "蜂巢闸 IV":
+		printerr("FAILED: Door rank 4 title must be 蜂巢闸 IV, got: ", _cell_menu_title(main_scene.current_menu_items))
+		main_scene.queue_free()
+		return false
+	MatchState.door_rank["room_101"] = 1
 	main_scene.handle_cell_click(door_101)
 	var door_item: Dictionary = _menu_item_by_id(main_scene.current_menu_items, "upgrade_door")
 	if door_item.is_empty():
@@ -1981,6 +2098,38 @@ func _test_cell_menu_door_hp_bar_and_popups() -> bool:
 	grid._process(grid.PRODUCTION_POPUP_LIFETIME + 0.05)
 	if not grid.production_popups.is_empty():
 		printerr("FAILED: Production popups should expire after ~0.8s")
+		main_scene.queue_free()
+		return false
+
+	# 10. 选中格菜单第一行：名称 + 等级（无等级只显示名称）
+	main_scene.handle_cell_click(plant_cell2)
+	if _cell_menu_title(main_scene.current_menu_items) != "化工厂 I":
+		printerr("FAILED: Chem plant I title must be 化工厂 I, got: ", _cell_menu_title(main_scene.current_menu_items))
+		main_scene.queue_free()
+		return false
+	var plant_title: Dictionary = MatchState.get_building_at_cell(plant_cell2)
+	plant_title["level"] = 7
+	main_scene.handle_cell_click(plant_cell2)
+	if _cell_menu_title(main_scene.current_menu_items) != "化工厂 VII":
+		printerr("FAILED: Chem plant VII title must be 化工厂 VII, got: ", _cell_menu_title(main_scene.current_menu_items))
+		main_scene.queue_free()
+		return false
+
+	var silicic_cell := Vector2i(4, 5)
+	var silicic := SilicicTurret.new()
+	silicic.substance = "silicic"
+	silicic.rank = 3
+	silicic.room_id = "room_101"
+	grid.add_turret(silicic_cell, silicic)
+	main_scene.handle_cell_click(silicic_cell)
+	if _cell_menu_title(main_scene.current_menu_items) != "硅酸 III":
+		printerr("FAILED: Silicic III title must be 硅酸 III, got: ", _cell_menu_title(main_scene.current_menu_items))
+		main_scene.queue_free()
+		return false
+	silicic.rank = 5
+	main_scene.handle_cell_click(silicic_cell)
+	if _cell_menu_title(main_scene.current_menu_items) != "胶幕（硅酸 V）":
+		printerr("FAILED: Silicic V title must be 胶幕（硅酸 V）, got: ", _cell_menu_title(main_scene.current_menu_items))
 		main_scene.queue_free()
 		return false
 
@@ -2569,8 +2718,8 @@ func _simulate_lv15_ion_gate_v_break(invader: InvaderActor, char_id: String) -> 
 	invader.silicic_slow_timer = 0.0
 	invader.silicic_slow_factor = 1.0
 	invader.carbonate_hitch_timer = 0.0
-	MatchState.invader_hp = MatchState.INVADER_MAX_HP
 	MatchState.invader_level = 15
+	MatchState.invader_hp = MatchState.get_invader_max_hp(15)
 
 	var raw: int = invader.get_base_attack_damage()
 	var eff: int = MatchState.get_effective_door_damage(raw, ion_armor)

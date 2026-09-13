@@ -185,7 +185,10 @@ const ROMAN_NUMERALS: Array[String] = [
 ]
 
 # 敌人常数
-const INVADER_MAX_HP: int = 200
+# 生命曲线：1 级 400；每升 1 级 max += 80（15 级 1520）。升级时当前 HP 同步加上限增量（满血则 current = 新 max，不按缺口比例回满）。
+const INVADER_MAX_HP: int = 400
+const INVADER_HP_PER_LEVEL: int = 80
+const INVADER_LEVEL_CAP: int = 15
 const INVADER_ATTACK_DAMAGE: int = 20
 const INVADER_ATTACK_INTERVAL: float = 1.0
 # 15 级基础拆伤必须在扣装甲后仍高于离子栅 V 回血：
@@ -646,6 +649,29 @@ func get_turret_display_name(substance: String, rank: int) -> String:
 		return "%s V (冠名: %s)" % [s_name, cap]
 	return "%s %s" % [s_name, r_str]
 
+func get_turret_cell_title(substance: String, rank: int) -> String:
+	var s_name: String = SUBSTANCE_NAMES.get(substance, substance)
+	var r_str: String = get_roman_numeral(rank)
+	if rank >= 5:
+		var cap: String = CAPSTONE_NAMES.get(substance, "")
+		if cap != "":
+			return "%s（%s %s）" % [cap, s_name, r_str]
+	return "%s %s" % [s_name, r_str]
+
+func get_invader_max_hp(level: int = -1) -> int:
+	var lvl: int = invader_level if level < 1 else level
+	lvl = clampi(lvl, 1, INVADER_LEVEL_CAP)
+	return INVADER_MAX_HP + (lvl - 1) * INVADER_HP_PER_LEVEL
+
+func apply_invader_level_up_hp(old_level: int, new_level: int) -> void:
+	var old_max: int = get_invader_max_hp(old_level)
+	var new_max: int = get_invader_max_hp(new_level)
+	var delta: int = new_max - old_max
+	if delta <= 0:
+		return
+	invader_hp = mini(new_max, invader_hp + delta)
+	invader_hp_changed.emit(invader_hp, new_max)
+
 func get_turret_stats(substance: String, rank: int) -> Dictionary:
 	var t_range: float = 4.0
 	var t_interval: float = 0.8
@@ -1036,7 +1062,7 @@ func damage_starter(room_id: String, damage: int) -> int:
 
 func damage_invader(damage: int) -> int:
 	invader_hp = max(0, invader_hp - damage)
-	invader_hp_changed.emit(invader_hp, INVADER_MAX_HP)
+	invader_hp_changed.emit(invader_hp, get_invader_max_hp())
 	if invader_hp <= 0:
 		set_game_result(GameResult.VICTORY)
 	return invader_hp

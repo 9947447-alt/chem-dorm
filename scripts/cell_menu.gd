@@ -18,24 +18,60 @@ const BUILD_IDS: Array[String] = [
 ]
 
 static func items_for_cell(cell: Vector2i, grid: GridMapManager, actor_id: String = "player") -> Array:
+	var items: Array = []
 	if grid == null:
-		return [_item("noop", "无法操作", false, "无效格子", "noop")]
+		items = [_item("noop", "无法操作", false, "无效格子", "noop")]
+	elif grid.turrets.has(cell):
+		items = _turret_items(cell, grid, actor_id)
+	else:
+		var existing: Dictionary = MatchState.get_building_at_cell(cell)
+		if not existing.is_empty():
+			if str(existing.get("id", "")) == "chem_plant":
+				items = _chem_plant_items(cell, grid, actor_id, existing)
+			else:
+				items = _occupied_items(existing)
+		else:
+			var cell_type: int = grid.cells.get(cell, GridMapManager.CellType.VOID)
+			if cell_type == GridMapManager.CellType.DOOR:
+				items = _door_items(cell, grid, actor_id)
+			elif cell_type == GridMapManager.CellType.STARTER:
+				items = _starter_items(cell, grid, actor_id)
+			else:
+				items = _build_items(cell, grid, actor_id, cell_type)
+	items.push_front(_item("cell_title", title_for_cell(cell, grid), false, "", "title"))
+	return items
 
+static func title_for_cell(cell: Vector2i, grid: GridMapManager) -> String:
+	if grid == null:
+		return "无法操作"
 	if grid.turrets.has(cell):
-		return _turret_items(cell, grid, actor_id)
-
+		var turret: SilicicTurret = grid.turrets[cell]
+		return MatchState.get_turret_cell_title(turret.substance, turret.rank)
 	var existing: Dictionary = MatchState.get_building_at_cell(cell)
 	if not existing.is_empty():
 		if str(existing.get("id", "")) == "chem_plant":
-			return _chem_plant_items(cell, grid, actor_id, existing)
-		return _occupied_items(existing)
-
+			return "化工厂 %s" % MatchState.get_roman_numeral(int(existing.get("level", 1)))
+		return str(existing.get("name", existing.get("id", "建筑")))
 	var cell_type: int = grid.cells.get(cell, GridMapManager.CellType.VOID)
-	if cell_type == GridMapManager.CellType.DOOR:
-		return _door_items(cell, grid, actor_id)
-	if cell_type == GridMapManager.CellType.STARTER:
-		return _starter_items(cell, grid, actor_id)
-	return _build_items(cell, grid, actor_id, cell_type)
+	match cell_type:
+		GridMapManager.CellType.DOOR:
+			var room: RoomData = grid.get_room_at_cell(cell)
+			if room != null:
+				return MatchState.get_door_display_name(room.room_id)
+			return "舱门"
+		GridMapManager.CellType.STARTER:
+			var s_room: RoomData = grid.get_room_by_starter_cell(cell)
+			if s_room != null:
+				return "起步矿 %s" % MatchState.get_roman_numeral(MatchState.get_starter_level(s_room.room_id))
+			return "起步矿"
+		GridMapManager.CellType.CORRIDOR, GridMapManager.CellType.ENTRANCE:
+			return "走廊"
+		GridMapManager.CellType.WALL:
+			return "墙"
+		GridMapManager.CellType.ROOM_FLOOR:
+			return "空地"
+		_:
+			return "空地"
 
 static func _item(id: String, label: String, enabled: bool, reason: String, action: String, extra: Dictionary = {}) -> Dictionary:
 	var d: Dictionary = {
