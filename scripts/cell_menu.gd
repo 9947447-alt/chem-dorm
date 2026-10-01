@@ -15,6 +15,8 @@ const BUILD_IDS: Array[String] = [
 	"focus_lens",
 	"robotic_arm",
 	"regulator_stack",
+	"particle_accelerator",
+	"atm",
 ]
 
 static func items_for_cell(cell: Vector2i, grid: GridMapManager, actor_id: String = "player") -> Array:
@@ -28,8 +30,10 @@ static func items_for_cell(cell: Vector2i, grid: GridMapManager, actor_id: Strin
 		if not existing.is_empty():
 			if str(existing.get("id", "")) == "chem_plant":
 				items = _chem_plant_items(cell, grid, actor_id, existing)
+			elif str(existing.get("category", "")) == "mine":
+				items = _mine_items(cell, grid, actor_id, existing)
 			else:
-				items = _occupied_items(existing)
+				items = _occupied_items(cell, grid, actor_id, existing)
 		else:
 			var cell_type: int = grid.cells.get(cell, GridMapManager.CellType.VOID)
 			if cell_type == GridMapManager.CellType.DOOR:
@@ -90,6 +94,11 @@ static func _catalog_cost(item_id: String) -> int:
 		return 0
 	return int(MatchState.BUILD_CATALOG[item_id].get("cost_money", 0))
 
+static func _catalog_feedstock_cost(item_id: String) -> int:
+	if not MatchState.BUILD_CATALOG.has(item_id):
+		return 0
+	return int(MatchState.BUILD_CATALOG[item_id].get("cost_feedstock", 0))
+
 static func _catalog_name(item_id: String) -> String:
 	if not MatchState.BUILD_CATALOG.has(item_id):
 		return item_id
@@ -132,8 +141,21 @@ static func _build_items(cell: Vector2i, grid: GridMapManager, actor_id: String,
 	var site_reason: String = _site_reason(cell_type)
 	var own_reason: String = _ownership_reason(cell, grid, actor_id)
 	for item_id in BUILD_IDS:
-		var cost: int = _catalog_cost(item_id)
-		var label: String = "%s ($%d)" % [_catalog_name(item_id), cost]
+		var cost_m: int = _catalog_cost(item_id)
+		var cost_f: int = _catalog_feedstock_cost(item_id)
+		var name_str: String = _catalog_name(item_id)
+		var label: String = ""
+		if item_id == "particle_accelerator":
+			label = "粒子加速器 效果：增加炮台50%%等攻速 价格：原料%d" % cost_f
+		elif item_id == "atm":
+			label = "取款机 效果：每周期产出高额金币 价格：金钱%d，原料%d" % [cost_m, cost_f]
+		elif cost_f > 0 and cost_m > 0:
+			label = "%s ($%d, 原料%d)" % [name_str, cost_m, cost_f]
+		elif cost_f > 0:
+			label = "%s (原料%d)" % [name_str, cost_f]
+		else:
+			label = "%s ($%d)" % [name_str, cost_m]
+
 		var reason: String = ""
 		if site_reason != "":
 			reason = site_reason
@@ -141,8 +163,10 @@ static func _build_items(cell: Vector2i, grid: GridMapManager, actor_id: String,
 			reason = own_reason
 		elif grid.has_building_at(cell):
 			reason = "该格已有建筑"
-		elif MatchState.get_actor_money(actor_id) < cost:
+		elif MatchState.get_actor_money(actor_id) < cost_m:
 			reason = "钱不够"
+		elif MatchState.get_actor_feedstock(actor_id) < cost_f:
+			reason = "原料不足"
 		else:
 			if item_id != "silicic_turret_1":
 				var room: RoomData = grid.get_room_at_cell(cell)
@@ -154,7 +178,7 @@ static func _build_items(cell: Vector2i, grid: GridMapManager, actor_id: String,
 				var room_t: RoomData = grid.get_room_at_cell(cell)
 				if room_t == null or not room_t.is_cell_interior(cell) or room_t.is_cell_starter(cell) or cell == room_t.door_cell:
 					reason = "该格不能建造"
-		var extra: Dictionary = {"item_id": item_id, "cost_money": cost}
+		var extra: Dictionary = {"item_id": item_id, "cost_money": cost_m, "cost_feedstock": cost_f}
 		var action: String = "build_turret" if item_id == "silicic_turret_1" else "build_item"
 		items.append(_item("build:%s" % item_id, label, reason == "", reason, action, extra))
 	return items
@@ -173,7 +197,7 @@ static func _door_items(cell: Vector2i, grid: GridMapManager, actor_id: String) 
 	else:
 		if reason == "":
 			reason = "无效格子"
-	var label: String = "升级舱门 ($%d)" % cost
+	var label: String = "-升级：金钱%d" % cost
 	return [_item("upgrade_door", label, reason == "", reason, "upgrade_door", {"cost_money": cost})]
 
 static func _starter_items(cell: Vector2i, grid: GridMapManager, actor_id: String) -> Array:
@@ -191,7 +215,7 @@ static func _starter_items(cell: Vector2i, grid: GridMapManager, actor_id: Strin
 	else:
 		if reason == "":
 			reason = "无效格子"
-	var label: String = "升级起步矿 ($%d)" % cost
+	var label: String = "-升级：金钱%d" % cost
 	return [_item("upgrade_starter", label, reason == "", reason, "upgrade_starter", {"cost_money": cost})]
 
 static func _chem_plant_items(cell: Vector2i, grid: GridMapManager, actor_id: String, plant: Dictionary) -> Array:
@@ -202,42 +226,107 @@ static func _chem_plant_items(cell: Vector2i, grid: GridMapManager, actor_id: St
 	var reason: String = own_reason
 	if reason == "" and not check.get("success", false):
 		reason = _short_reason(str(check.get("reason", "无法升级")))
-	var label: String = "升级化工厂 ($%d)" % cost
-	return [_item("upgrade_chem_plant", label, reason == "", reason, "upgrade_chem_plant", {"cost_money": cost})]
+	var label: String = "-升级：金钱%d" % cost
+	var items: Array = [_item("upgrade_chem_plant", label, reason == "", reason, "upgrade_chem_plant", {"cost_money": cost})]
+	items.append(_demolish_item(cell, grid, actor_id))
+	return items
 
-static func _occupied_items(existing: Dictionary) -> Array:
+static func _mine_items(cell: Vector2i, grid: GridMapManager, actor_id: String, existing: Dictionary) -> Array:
+	var items: Array = []
+	var room: RoomData = grid.get_room_at_cell(cell) if grid != null else null
+	var r_id: String = room.room_id if room != null else ""
+	var check: Dictionary = MatchState.can_upgrade_mine(r_id, actor_id, cell)
+	var own_reason: String = _ownership_reason(cell, grid, actor_id)
+	var reason: String = own_reason
+	var cost: int = int(check.get("cost_money", 0))
+	var next_id: String = str(check.get("next_id", ""))
+	var next_name: String = str(MatchState.BUILD_CATALOG.get(next_id, {}).get("name", "高级矿"))
+	if reason == "" and not check.get("success", false):
+		reason = _short_reason(str(check.get("reason", "无法升级")))
+	var label: String = "-升级：金钱%d (升级为 %s)" % [cost, next_name] if next_id != "" else "已达最高级"
+	items.append(_item("upgrade_mine", label, reason == "", reason, "upgrade_mine", {"cost_money": cost}))
+	items.append(_demolish_item(cell, grid, actor_id))
+	return items
+
+static func _occupied_items(cell: Vector2i, grid: GridMapManager, actor_id: String, existing: Dictionary) -> Array:
+	var b_id: String = str(existing.get("id", ""))
 	var name: String = str(existing.get("name", existing.get("id", "建筑")))
-	return [_item("occupied", "%s（已建成）" % name, false, "不能升级", "noop")]
+	var desc: String = "已建成"
+	if b_id == "particle_accelerator":
+		desc = "效果：增加炮台50%等攻速"
+	elif b_id == "atm":
+		desc = "效果：每周期产出高额金币"
+	elif b_id == "regulator_stack":
+		desc = "效果：全房经济+15%，炮台射速+15%"
+	elif b_id == "catalytic_column":
+		desc = "效果：相邻炮台射速+25%"
+	elif b_id == "focus_lens":
+		desc = "效果：相邻炮台射程+1.0"
+	elif b_id == "robotic_arm":
+		desc = "效果：相邻矿山产出+35%"
+
+	var items: Array = [_item("occupied", "%s（%s）" % [name, desc], false, "不能升级", "noop")]
+	items.append(_demolish_item(cell, grid, actor_id))
+	return items
+
+static func _demolish_item(cell: Vector2i, grid: GridMapManager, actor_id: String) -> Dictionary:
+	var room: RoomData = grid.get_room_at_cell(cell) if grid != null else null
+	var r_id: String = room.room_id if room != null else ""
+	var check: Dictionary = MatchState.can_demolish(r_id, actor_id, cell, grid)
+	var own_reason: String = _ownership_reason(cell, grid, actor_id)
+	var reason: String = own_reason
+	if reason == "" and not check.get("success", false):
+		reason = _short_reason(str(check.get("reason", "不可拆除")))
+	var refund_m: int = int(check.get("refund_money", 0))
+	var refund_f: int = int(check.get("refund_feedstock", 0))
+	var label: String = ""
+	if refund_f > 0:
+		label = "-摧毁：回收金钱%d，原料%d" % [refund_m, refund_f]
+	else:
+		label = "-摧毁：回收金钱%d" % refund_m
+	return _item("demolish", label, reason == "", reason, "demolish", {"refund_money": refund_m, "refund_feedstock": refund_f})
 
 static func _turret_items(cell: Vector2i, grid: GridMapManager, actor_id: String) -> Array:
 	var turret: SilicicTurret = grid.turrets[cell]
 	var own_reason: String = _ownership_reason(cell, grid, actor_id)
 	var items: Array = []
 	if turret.substance == "carbonate" and turret.rank >= 5 and turret.branch_line == "":
-		items.append(_branch_item(turret, actor_id, own_reason, "line_a", "换线 A 次氯酸"))
-		items.append(_branch_item(turret, actor_id, own_reason, "line_b", "换线 B 盐酸"))
+		items.append(_branch_item(turret, actor_id, own_reason, "line_a", "次氯酸"))
+		items.append(_branch_item(turret, actor_id, own_reason, "line_b", "盐酸"))
+		items.append(_demolish_item(cell, grid, actor_id))
 		return items
 	var check: Dictionary = MatchState.can_upgrade_turret(turret)
-	var cost: int = int(check.get("cost_money", 0))
+	var cost_m: int = int(check.get("cost_money", 0))
+	var cost_f: int = int(check.get("cost_feedstock", 0))
 	var reason: String = own_reason
 	if reason == "" and not check.get("success", false):
 		reason = _short_reason(str(check.get("reason", "无法升级")))
-	elif reason == "" and MatchState.get_actor_money(actor_id) < cost:
+	elif reason == "" and MatchState.get_actor_money(actor_id) < cost_m:
 		reason = "钱不够"
-	var label: String = "升级炮台 ($%d)" % cost
-	items.append(_item("upgrade_turret", label, reason == "", reason, "upgrade_turret", {"cost_money": cost}))
+	elif reason == "" and MatchState.get_actor_feedstock(actor_id) < cost_f:
+		reason = "原料不足"
+	var label: String = ""
+	if cost_f > 0:
+		label = "-升级：金钱%d，化学原料%d" % [cost_m, cost_f]
+	else:
+		label = "-升级：金钱%d" % cost_m
+	items.append(_item("upgrade_turret", label, reason == "", reason, "upgrade_turret", {"cost_money": cost_m, "cost_feedstock": cost_f}))
+	items.append(_demolish_item(cell, grid, actor_id))
 	return items
 
 static func _branch_item(turret: SilicicTurret, actor_id: String, own_reason: String, branch: String, title: String) -> Dictionary:
 	var check: Dictionary = MatchState.can_upgrade_turret(turret, branch)
-	var cost: int = int(check.get("cost_money", 500))
+	var cost_m: int = int(check.get("cost_money", 500))
+	var cost_f: int = int(check.get("cost_feedstock", 20))
 	var reason: String = own_reason
 	if reason == "" and not check.get("success", false):
 		reason = _short_reason(str(check.get("reason", "无法换线")))
-	elif reason == "" and MatchState.get_actor_money(actor_id) < cost:
+	elif reason == "" and MatchState.get_actor_money(actor_id) < cost_m:
 		reason = "钱不够"
-	var label: String = "%s ($%d)" % [title, cost]
-	return _item("switch_line:%s" % branch, label, reason == "", reason, "switch_line", {"branch": branch, "cost_money": cost})
+	elif reason == "" and MatchState.get_actor_feedstock(actor_id) < cost_f:
+		reason = "原料不足"
+	var label: String = "-升级换线为 %s：金钱%d，化学原料%d" % [title, cost_m, cost_f]
+	return _item("switch_line:%s" % branch, label, reason == "", reason, "switch_line", {"branch": branch, "cost_money": cost_m, "cost_feedstock": cost_f})
 
 static func _short_reason(raw: String) -> String:
 	if raw.contains("未占房"):

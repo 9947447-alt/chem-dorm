@@ -23,6 +23,8 @@ func start_ai() -> void:
 	_select_and_navigate_to_room()
 
 func _process(delta: float) -> void:
+	if MatchState.is_in_freeze():
+		return
 	super._process(delta)
 	
 	if bot_state == BotState.SEARCHING:
@@ -37,7 +39,7 @@ func _process(delta: float) -> void:
 			_think_and_build()
 
 func _select_and_navigate_to_room() -> void:
-	if grid_manager == null:
+	if grid_manager == null or MatchState.is_in_freeze():
 		return
 	
 	# Find all unlocked rooms
@@ -61,18 +63,19 @@ func _select_and_navigate_to_room() -> void:
 	if candidate_rooms.is_empty():
 		candidate_rooms = unlocked_rooms
 	
-	# Find candidate room with shortest path
+	# 随机打乱候选房间，使盟友走向随机不同房间
+	candidate_rooms.shuffle()
+
 	var best_room: RoomData = null
 	var best_path: Array[Vector2i] = []
-	var min_length: int = 999999
 	
 	for r in candidate_rooms:
 		var starter_goal: Vector2i = r.starter_cells[0]
 		var path: Array[Vector2i] = grid_manager.get_path_for_actor(current_cell, starter_goal, actor_id)
-		if path.size() > 0 and path.size() < min_length:
-			min_length = path.size()
+		if not path.is_empty():
 			best_room = r
 			best_path = path
+			break
 
 	if best_room != null and not best_path.is_empty():
 		if target_room_id != "" and room_intent.get(target_room_id) == actor_id:
@@ -248,6 +251,20 @@ func _think_and_build() -> void:
 						empty_cells.erase(n)
 						if MatchState.buy_and_place_building(target_room_id, "focus_lens", actor_id, n):
 							return
+
+		# 粒子加速器 (有炮台且原料充足，进一步大幅提升防御火力)
+		if not my_turrets.is_empty() and MatchState.get_actor_feedstock(actor_id) >= 120:
+			var pa_count: int = MatchState.count_building_type_in_room(target_room_id, "particle_accelerator")
+			if pa_count < 2: # 盟友优先建造最多 2 台
+				var pa_cell: Vector2i = empty_cells.pop_back()
+				if MatchState.buy_and_place_building(target_room_id, "particle_accelerator", actor_id, pa_cell):
+					return
+
+		# 取款机 (金钱 >= 1000 且原料 >= 40 时建造，提供高额周期收益)
+		if money >= 1000 and MatchState.get_actor_feedstock(actor_id) >= 40:
+			var atm_cell: Vector2i = empty_cells.pop_back()
+			if MatchState.buy_and_place_building(target_room_id, "atm", actor_id, atm_cell):
+				return
 
 	# 决策 6: 建造矿山拓展经济
 	if not empty_cells.is_empty():

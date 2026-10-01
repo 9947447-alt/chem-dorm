@@ -98,7 +98,10 @@ func _on_countdown_tick(remaining: float) -> void:
 
 func _update_countdown_label(remaining: float) -> void:
 	if MatchState.current_phase == MatchState.Phase.COUNTDOWN:
-		label_countdown.text = "倒计时: %.1fs" % remaining
+		if MatchState.startup_freeze > 0.0:
+			label_countdown.text = "准备阶段: %.1fs" % MatchState.startup_freeze
+		else:
+			label_countdown.text = "倒计时: %.1fs" % remaining
 	else:
 		label_countdown.text = "倒计时: 0.0s [敌人已进入走廊]"
 
@@ -162,10 +165,10 @@ func _on_game_over(_result: int) -> void:
 func _update_outcome_display() -> void:
 	match MatchState.game_result:
 		MatchState.GameResult.VICTORY:
-			label_outcome.text = "胜利！敌人已被炮台消灭"
+			label_outcome.text = "胜利！敌人已被炮台消灭\n[ 按 R 键重新开始 ]"
 			label_outcome.modulate = Color(0.2, 1.0, 0.3)
 		MatchState.GameResult.DEFEAT:
-			label_outcome.text = "失败！起步矿被摧毁"
+			label_outcome.text = "失败！起步矿被摧毁\n[ 按 R 键重新开始 ]"
 			label_outcome.modulate = Color(1.0, 0.2, 0.2)
 		_:
 			label_outcome.text = ""

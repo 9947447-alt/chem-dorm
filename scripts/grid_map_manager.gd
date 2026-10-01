@@ -2,8 +2,8 @@ class_name GridMapManager
 extends Node2D
 
 const TILE_SIZE: int = 32
-const GRID_WIDTH: int = 42
-const GRID_HEIGHT: int = 28
+const GRID_WIDTH: int = 76
+const GRID_HEIGHT: int = 34
 
 enum CellType {
 	VOID,
@@ -20,7 +20,7 @@ var rooms: Array[RoomData] = []
 var room_by_id: Dictionary = {} # String -> RoomData
 var room_by_door: Dictionary = {} # Vector2i -> RoomData
 var invader_spawn_cell: Vector2i = Vector2i(1, 13)
-var heal_pad_cells: Array[Vector2i] = [Vector2i(39, 13), Vector2i(39, 14)] # 走廊偏僻回血点（远离全部门，超出默认炮台射程）
+var heal_pad_cells: Array[Vector2i] = [Vector2i(70, 13), Vector2i(70, 14)] # 走廊东侧偏僻回血点（远离全部门，超出默认炮台射程）
 var corridor_cells: Array[Vector2i] = []
 var acid_puddles: Dictionary = {} # Vector2i -> Dictionary { "timer": float, "dps": int }
 
@@ -28,11 +28,15 @@ var astar_full: AStarGrid2D
 var astar_corridor: AStarGrid2D
 var turrets: Dictionary = {} # Vector2i -> SilicicTurret
 var selected_cell: Vector2i = Vector2i(-9999, -9999)
+var hovered_cell: Vector2i = Vector2i(-9999, -9999)
 var production_popups: Array[Dictionary] = []
+var combat_popups: Array[Dictionary] = []
 
 const PRODUCTION_POPUP_LIFETIME: float = 0.8
-const DOOR_HP_BAR_HEIGHT: float = 4.0
-const DOOR_HP_BAR_OFFSET_Y: float = 6.0
+const COMBAT_POPUP_LIFETIME: float = 0.8
+const DOOR_HP_BAR_HEIGHT: float = 8.0
+const DOOR_HP_BAR_OFFSET_Y: float = 10.0
+const STARTER_HP_BAR_HEIGHT: float = 8.0
 
 func _ready() -> void:
 	_init_rooms()
@@ -44,12 +48,17 @@ func _ready() -> void:
 		MatchState.production_popup.connect(_on_production_popup)
 	if not MatchState.door_hp_changed.is_connected(_on_door_hp_changed):
 		MatchState.door_hp_changed.connect(_on_door_hp_changed)
+	if not MatchState.starter_hp_changed.is_connected(_on_starter_hp_changed):
+		MatchState.starter_hp_changed.connect(_on_starter_hp_changed)
 	queue_redraw()
 
 func _on_production_popup(cell: Vector2i, kind: String, amount: int) -> void:
 	spawn_production_popup(cell, kind, amount)
 
 func _on_door_hp_changed(_room_id: String, _hp: int, _max_hp: int) -> void:
+	queue_redraw()
+
+func _on_starter_hp_changed(_room_id: String, _hp: int, _max_hp: int) -> void:
 	queue_redraw()
 
 func spawn_production_popup(cell: Vector2i, kind: String, amount: int) -> void:
@@ -59,6 +68,17 @@ func spawn_production_popup(cell: Vector2i, kind: String, amount: int) -> void:
 		"cell": cell,
 		"kind": kind,
 		"amount": amount,
+		"age": 0.0
+	})
+	queue_redraw()
+
+func spawn_combat_popup(cell: Vector2i, text: String, color: Color = Color.WHITE) -> void:
+	if text == "":
+		return
+	combat_popups.append({
+		"cell": cell,
+		"text": text,
+		"color": color,
 		"age": 0.0
 	})
 	queue_redraw()
@@ -89,6 +109,17 @@ func _process(delta: float) -> void:
 		else:
 			need_redraw = true
 		production_popups = remain
+	if not combat_popups.is_empty():
+		var remain_combat: Array[Dictionary] = []
+		for cp in combat_popups:
+			cp["age"] = float(cp.get("age", 0.0)) + delta
+			if float(cp["age"]) < COMBAT_POPUP_LIFETIME:
+				remain_combat.append(cp)
+		if remain_combat.size() != combat_popups.size():
+			need_redraw = true
+		else:
+			need_redraw = true
+		combat_popups = remain_combat
 	if need_redraw:
 		queue_redraw()
 
@@ -115,7 +146,7 @@ func _init_rooms() -> void:
 	room_by_id.clear()
 	room_by_door.clear()
 
-	# Room 1: 8x8
+	# Room 1: 8x8 (宿舍 101)
 	var r1 := RoomData.new(
 		"room_101",
 		"宿舍 101 (8x8)",
@@ -126,7 +157,7 @@ func _init_rooms() -> void:
 		[Vector2i(3, 4), Vector2i(4, 4)]
 	)
 
-	# Room 2: 10x8
+	# Room 2: 10x8 (宿舍 102)
 	var r2 := RoomData.new(
 		"room_102",
 		"宿舍 102 (10x8)",
@@ -137,7 +168,7 @@ func _init_rooms() -> void:
 		[Vector2i(14, 4), Vector2i(15, 4)]
 	)
 
-	# Room 3: 6x10
+	# Room 3: 6x10 (宿舍 103)
 	var r3 := RoomData.new(
 		"room_103",
 		"宿舍 103 (6x10)",
@@ -148,40 +179,84 @@ func _init_rooms() -> void:
 		[Vector2i(27, 2), Vector2i(28, 2)]
 	)
 
-	# Room 4: 8x8
+	# Room 4: 7x7 (宿舍 104)
 	var r4 := RoomData.new(
 		"room_104",
-		"宿舍 104 (8x8)",
-		Vector2i(8, 8),
-		Rect2i(3, 16, 8, 8),
-		Vector2i(6, 15),
-		Vector2i(6, 14),
-		[Vector2i(3, 23), Vector2i(4, 23)]
+		"宿舍 104 (7x7)",
+		Vector2i(7, 7),
+		Rect2i(36, 5, 7, 7),
+		Vector2i(39, 12),
+		Vector2i(39, 13),
+		[Vector2i(36, 5), Vector2i(37, 5)]
 	)
 
-	# Room 5: 10x8
+	# Room 5: 9x9 (宿舍 105)
 	var r5 := RoomData.new(
 		"room_105",
-		"宿舍 105 (10x8)",
-		Vector2i(10, 8),
-		Rect2i(14, 16, 10, 8),
+		"宿舍 105 (9x9)",
+		Vector2i(9, 9),
+		Rect2i(46, 3, 9, 9),
+		Vector2i(50, 12),
+		Vector2i(50, 13),
+		[Vector2i(46, 3), Vector2i(47, 3)]
+	)
+
+	# Room 6: 8x7 (宿舍 106)
+	var r6 := RoomData.new(
+		"room_106",
+		"宿舍 106 (8x7)",
+		Vector2i(8, 7),
+		Rect2i(3, 16, 8, 7),
+		Vector2i(6, 15),
+		Vector2i(6, 14),
+		[Vector2i(3, 22), Vector2i(4, 22)]
+	)
+
+	# Room 7: 11x8 (宿舍 107)
+	var r7 := RoomData.new(
+		"room_107",
+		"宿舍 107 (11x8)",
+		Vector2i(11, 8),
+		Rect2i(14, 16, 11, 8),
 		Vector2i(18, 15),
 		Vector2i(18, 14),
 		[Vector2i(14, 23), Vector2i(15, 23)]
 	)
 
-	# Room 6: 6x10
-	var r6 := RoomData.new(
-		"room_106",
-		"宿舍 106 (6x10)",
-		Vector2i(6, 10),
-		Rect2i(27, 16, 6, 10),
-		Vector2i(29, 15),
-		Vector2i(29, 14),
-		[Vector2i(27, 25), Vector2i(28, 25)]
+	# Room 8: 7x9 (宿舍 108)
+	var r8 := RoomData.new(
+		"room_108",
+		"宿舍 108 (7x9)",
+		Vector2i(7, 9),
+		Rect2i(28, 16, 7, 9),
+		Vector2i(31, 15),
+		Vector2i(31, 14),
+		[Vector2i(28, 24), Vector2i(29, 24)]
 	)
 
-	var room_list: Array[RoomData] = [r1, r2, r3, r4, r5, r6]
+	# Room 9: 9x7 (宿舍 109)
+	var r9 := RoomData.new(
+		"room_109",
+		"宿舍 109 (9x7)",
+		Vector2i(9, 7),
+		Rect2i(38, 16, 9, 7),
+		Vector2i(42, 15),
+		Vector2i(42, 14),
+		[Vector2i(38, 22), Vector2i(39, 22)]
+	)
+
+	# Room 10: 10x9 (宿舍 110)
+	var r10 := RoomData.new(
+		"room_110",
+		"宿舍 110 (10x9)",
+		Vector2i(10, 9),
+		Rect2i(50, 16, 10, 9),
+		Vector2i(54, 15),
+		Vector2i(54, 14),
+		[Vector2i(50, 24), Vector2i(51, 24)]
+	)
+
+	var room_list: Array[RoomData] = [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10]
 	for r in room_list:
 		rooms.append(r)
 		room_by_id[r.room_id] = r
@@ -197,8 +272,8 @@ func _build_grid() -> void:
 		for y in range(GRID_HEIGHT):
 			cells[Vector2i(x, y)] = CellType.VOID
 
-	# 2. Build Corridor (Y = 13..14, X = 1..40)
-	for x in range(1, 41):
+	# 2. Build Corridor (Y = 13..14, X = 1..74)
+	for x in range(1, 75):
 		for y in [13, 14]:
 			var cell := Vector2i(x, y)
 			cells[cell] = CellType.CORRIDOR
@@ -237,7 +312,7 @@ func _build_grid() -> void:
 		cells[r.door_cell] = CellType.DOOR
 
 	# 4. Corridor Boundary Walls
-	for x in range(0, 42):
+	for x in range(0, 76):
 		# North wall of corridor
 		var n_cell := Vector2i(x, 12)
 		if cells.get(n_cell, CellType.VOID) == CellType.VOID:
@@ -251,8 +326,8 @@ func _build_grid() -> void:
 	# Corridor West & East walls
 	cells[Vector2i(0, 13)] = CellType.WALL
 	cells[Vector2i(0, 14)] = CellType.WALL
-	cells[Vector2i(41, 13)] = CellType.WALL
-	cells[Vector2i(41, 14)] = CellType.WALL
+	cells[Vector2i(75, 13)] = CellType.WALL
+	cells[Vector2i(75, 14)] = CellType.WALL
 
 func _init_astar() -> void:
 	# General AStar
@@ -329,9 +404,13 @@ func get_path_for_actor(from_cell: Vector2i, to_cell: Vector2i, actor_id: String
 	return raw_path
 
 func get_invader_path_to_cell(from_cell: Vector2i, to_cell: Vector2i) -> Array[Vector2i]:
-	# Invader moves purely along corridor
-	var raw_path: Array[Vector2i] = astar_corridor.get_id_path(from_cell, to_cell)
-	return raw_path
+	var room := get_room_at_cell(from_cell)
+	if room != null:
+		if MatchState.is_door_broken(room.room_id):
+			astar_full.set_point_solid(room.door_cell, false)
+		astar_full.set_point_solid(from_cell, false)
+		return astar_full.get_id_path(from_cell, to_cell)
+	return astar_corridor.get_id_path(from_cell, to_cell)
 
 func get_invader_path_to_heal_pad(from_cell: Vector2i, pad_cell: Vector2i) -> Array[Vector2i]:
 	var room := get_room_at_cell(from_cell)
@@ -453,17 +532,48 @@ func _draw() -> void:
 						draw_rect(rect, Color(0.18, 0.72, 0.65))
 						draw_rect(rect, Color(0.35, 0.95, 0.85), false, 2.0)
 
-	# 每扇舱门在门格上方画血条（按当前 HP/最大 HP 变短，破门后空条）
+	# 每扇舱门在门格上方画血条（按当前 HP/最大 HP 变短，破门后空条，高度 8px）
 	for r in rooms:
 		var door: Vector2i = r.door_cell
 		var bar_x: float = float(door.x * TILE_SIZE)
+		var bar_w: float = float(TILE_SIZE)
 		var bar_y: float = float(door.y * TILE_SIZE) - DOOR_HP_BAR_OFFSET_Y
-		var bar_bg := Rect2(bar_x, bar_y, float(TILE_SIZE), DOOR_HP_BAR_HEIGHT)
+		var bar_bg := Rect2(bar_x, bar_y, bar_w, DOOR_HP_BAR_HEIGHT)
 		draw_rect(bar_bg, Color(0.08, 0.09, 0.10))
 		var fill_w: float = get_door_hp_bar_fill_width(r.room_id)
 		if fill_w > 0.0:
-			draw_rect(Rect2(bar_x, bar_y, fill_w, DOOR_HP_BAR_HEIGHT), Color(0.25, 0.85, 0.40))
-		draw_rect(bar_bg, Color(0.15, 0.18, 0.16), false, 1.0)
+			var ratio: float = MatchState.get_door_hp_bar_ratio(r.room_id)
+			var bar_color: Color = Color(0.25, 0.85, 0.40) if ratio > 0.35 else Color(0.95, 0.25, 0.25)
+			draw_rect(Rect2(bar_x, bar_y, fill_w, DOOR_HP_BAR_HEIGHT), bar_color)
+		draw_rect(bar_bg, Color(0.2, 0.25, 0.22), false, 1.2)
+
+	# 起步矿血条（受损或处于入侵阶段时动态展示）
+	for r in rooms:
+		var s_hp: int = MatchState.get_starter_hp(r.room_id)
+		if not r.starter_cells.is_empty() and (s_hp < MatchState.STARTER_MAX_HP or MatchState.current_phase == MatchState.Phase.INVADING):
+			var min_sc_x: int = 9999
+			var max_sc_x: int = -9999
+			var min_sc_y: int = 9999
+			for sc in r.starter_cells:
+				min_sc_x = min(min_sc_x, sc.x)
+				max_sc_x = max(max_sc_x, sc.x)
+				min_sc_y = min(min_sc_y, sc.y)
+			var s_w: float = float(max_sc_x - min_sc_x + 1) * float(TILE_SIZE)
+			var s_x: float = float(min_sc_x * TILE_SIZE)
+			var s_y: float = float(min_sc_y * TILE_SIZE) - DOOR_HP_BAR_OFFSET_Y
+			var s_bg := Rect2(s_x, s_y, s_w, DOOR_HP_BAR_HEIGHT)
+			draw_rect(s_bg, Color(0.08, 0.09, 0.10))
+			var ratio: float = clampf(float(s_hp) / float(MatchState.STARTER_MAX_HP), 0.0, 1.0)
+			if ratio > 0.0:
+				var s_color: Color = Color(0.3, 0.7, 1.0) if s_hp > 35 else Color(0.95, 0.25, 0.25)
+				draw_rect(Rect2(s_x, s_y, s_w * ratio, DOOR_HP_BAR_HEIGHT), s_color)
+			draw_rect(s_bg, Color(0.15, 0.18, 0.2), false, 1.0)
+
+	# 鼠标悬停高亮格子
+	if cells.has(hovered_cell) and hovered_cell != selected_cell:
+		var hov_rect := Rect2(hovered_cell.x * TILE_SIZE, hovered_cell.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+		draw_rect(hov_rect, Color(0.35, 0.75, 1.0, 0.15))
+		draw_rect(hov_rect, Color(0.5, 0.85, 1.0, 0.5), false, 1.0)
 
 	if cells.has(selected_cell):
 		var sel_rect := Rect2(selected_cell.x * TILE_SIZE, selected_cell.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
@@ -570,4 +680,15 @@ func _draw() -> void:
 		var alpha: float = 1.0 - t * 0.25
 		draw_circle(pos, 3.5, Color(dot_color.r, dot_color.g, dot_color.b, alpha))
 		draw_string(font, pos + Vector2(6, 4), "%s +%d" % [prefix, amount], HORIZONTAL_ALIGNMENT_LEFT, 80, 11, Color(1.0, 1.0, 1.0, alpha))
+
+	# 战斗跳字：伤害 / 回血
+	for cp in combat_popups:
+		var cp_cell: Vector2i = cp.get("cell", Vector2i.ZERO)
+		var text: String = str(cp.get("text", ""))
+		var col: Color = cp.get("color", Color.WHITE)
+		var ct: float = clampf(float(cp.get("age", 0.0)) / COMBAT_POPUP_LIFETIME, 0.0, 1.0)
+		var c_pos: Vector2 = cell_to_world(cp_cell) + Vector2(-24.0, -12.0 - ct * 18.0)
+		var c_alpha: float = 1.0 - ct * 0.25
+		draw_string(font, c_pos, text, HORIZONTAL_ALIGNMENT_CENTER, 48, 12, Color(col.r, col.g, col.b, c_alpha))
+
 

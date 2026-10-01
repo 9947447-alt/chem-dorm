@@ -25,6 +25,10 @@ func _ready() -> void:
 	success = success and _test_silicic_i_placement_rules()
 	success = success and _test_invader_attack_door_and_enter_room()
 	success = success and _test_victory_and_defeat_conditions()
+	success = success and _test_optimization_loop_and_combat_feedback()
+	success = success and _test_new_optimization_features()
+	success = success and _test_audit_and_deep_regression()
+	success = success and _test_hatch_and_invader_balance()
 
 	if success:
 		print("========================================")
@@ -38,23 +42,21 @@ func _ready() -> void:
 		get_tree().quit(1)
 
 func _test_room_specifications() -> bool:
-	print("\n[TEST 1] Testing Room Specifications (8x8, 10x8, 6x10)...")
+	print("\n[TEST 1] Testing Room Specifications (10+ Diverse Rooms)...")
 	var grid := GridMapManager.new()
 	add_child(grid)
 	grid._ready()
 
 	var all_rooms := grid.get_all_rooms()
-	if all_rooms.size() != 6:
-		printerr("FAILED: Expected 6 rooms, got ", all_rooms.size())
+	if all_rooms.size() < 10:
+		printerr("FAILED: Expected at least 10 rooms, got ", all_rooms.size())
 		grid.queue_free()
 		return false
 
-	var valid_specs: Array[Vector2i] = [Vector2i(8, 8), Vector2i(10, 8), Vector2i(6, 10)]
+	var recorded_specs: Array[Vector2i] = []
 	for r in all_rooms:
-		if not (r.spec_size in valid_specs):
-			printerr("FAILED: Room %s has invalid spec %s" % [r.room_id, r.spec_size])
-			grid.queue_free()
-			return false
+		if not (r.spec_size in recorded_specs):
+			recorded_specs.append(r.spec_size)
 
 		# Check starter occupies exactly 2 cells
 		if r.starter_cells.size() != 2:
@@ -81,7 +83,12 @@ func _test_room_specifications() -> bool:
 			grid.queue_free()
 			return false
 
-	print("PASS: All 6 rooms match specs (8x8, 10x8, 6x10), 2-cell starters, 1-cell doors connecting to corridor.")
+	if recorded_specs.size() < 5:
+		printerr("FAILED: Rooms should have multiple diverse sizes, got: ", recorded_specs)
+		grid.queue_free()
+		return false
+
+	print("PASS: All %d rooms match specs with diverse sizes, 2-cell starters, 1-cell doors connecting to corridor." % all_rooms.size())
 	grid.queue_free()
 	return true
 
@@ -173,14 +180,14 @@ func _test_allies_claim_flow() -> bool:
 	# Player claims room_101
 	MatchState.claim_room("room_101", "player")
 
-	# Simulate 5 allies claiming the remaining 5 rooms
+	# Simulate 5 allies claiming 5 separate rooms
 	var remaining_rooms: Array[RoomData] = []
 	for r in grid.get_all_rooms():
 		if not MatchState.is_room_locked(r.room_id):
 			remaining_rooms.append(r)
 
-	if remaining_rooms.size() != 5:
-		printerr("FAILED: Expected 5 remaining rooms, got ", remaining_rooms.size())
+	if remaining_rooms.size() < 5:
+		printerr("FAILED: Expected at least 5 remaining rooms, got ", remaining_rooms.size())
 		grid.queue_free()
 		return false
 
@@ -197,22 +204,19 @@ func _test_allies_claim_flow() -> bool:
 		bot._on_step_completed()
 		bot.queue_free()
 
-	# Verify each of the 6 rooms is locked with a unique owner
+	# Verify each of the 6 claimed rooms is locked with a unique owner
 	var owners: Array[String] = []
 	for r in grid.get_all_rooms():
-		if not MatchState.is_room_locked(r.room_id):
-			printerr("FAILED: Room %s was not locked" % [r.room_id])
-			grid.queue_free()
-			return false
-		var owner: String = MatchState.get_room_owner(r.room_id)
-		if owner in owners:
-			printerr("FAILED: Duplicate room owner %s" % [owner])
-			grid.queue_free()
-			return false
-		owners.append(owner)
+		if MatchState.is_room_locked(r.room_id):
+			var owner: String = MatchState.get_room_owner(r.room_id)
+			if owner in owners:
+				printerr("FAILED: Duplicate room owner %s" % [owner])
+				grid.queue_free()
+				return false
+			owners.append(owner)
 
 	if owners.size() != 6:
-		printerr("FAILED: Expected 6 unique owners, got ", owners.size())
+		printerr("FAILED: Expected 6 unique owners (player + 5 allies), got ", owners.size())
 		grid.queue_free()
 		return false
 
@@ -693,7 +697,7 @@ func _test_phase_2_acid_tree() -> bool:
 		grid.queue_free()
 		return false
 
-	# 验证特效 7：氟锑酸隔门穿透直击 (Pierce through hatch to the invader)
+	# 验证射程机制：现在只要在射程范围内均可开火，且氟锑酸具备超强穿透打击力
 	MatchState.door_broken["room_101"] = false # 确保本房间舱门完好闭锁
 	invader.current_cell = Vector2i(10, 13) # 敌人位于走廊深处（不在门外格）
 	invader.global_position = grid.cell_to_world(invader.current_cell)
@@ -701,8 +705,8 @@ func _test_phase_2_acid_tree() -> bool:
 	grid.add_turret(Vector2i(4, 4), normal_turret)
 	normal_turret.init_turret(Vector2i(4, 4), invader, grid)
 	normal_turret.turret_range = 10.0 # 给予足够射程
-	if normal_turret._can_shoot_target(invader):
-		printerr("FAILED: Normal turret should be BLOCKED by closed door when target is in deep corridor!")
+	if not normal_turret._can_shoot_target(invader):
+		printerr("FAILED: Turret within range should be able to target invader!")
 		invader.queue_free()
 		grid.queue_free()
 		return false
@@ -1039,8 +1043,8 @@ func _test_phase_3_hatch_system() -> bool:
 		printerr("FAILED: Initial hatch not honeycomb I")
 		grid.queue_free()
 		return false
-	if MatchState.get_door_regen_rate("room_101") != 0:
-		printerr("FAILED: Honeycomb I should have 0 regen")
+	if MatchState.get_door_regen_rate("room_101") <= 0:
+		printerr("FAILED: Honeycomb I should have enhanced auto-regen > 0")
 		grid.queue_free()
 		return false
 
@@ -1490,9 +1494,9 @@ func _test_phase_5_ally_and_hightech() -> bool:
 	grid.add_turret(t_cell, turret)
 	turret.init_turret(t_cell, null, grid)
 
-	# 初始状态：射程 4.0，射击间隔 0.8
-	if not is_equal_approx(turret.get_effective_range(), 4.0):
-		printerr("FAILED: Initial turret range should be 4.0, got: ", turret.get_effective_range())
+	# 初始状态：增强后射程 MatchState.TURRET_RANGE (7.0)，射击间隔 0.8
+	if not is_equal_approx(turret.get_effective_range(), MatchState.TURRET_RANGE):
+		printerr("FAILED: Initial turret range should be %f, got: %f" % [MatchState.TURRET_RANGE, turret.get_effective_range()])
 		turret.queue_free()
 		grid.queue_free()
 		return false
@@ -1515,14 +1519,14 @@ func _test_phase_5_ally_and_hightech() -> bool:
 		grid.queue_free()
 		return false
 
-	# (2) 建造聚焦镜在 (5, 6)（相邻格） -> 射程 +1 (4.0 + 1.0 = 5.0)
+	# (2) 建造聚焦镜在 (5, 6)（相邻格） -> 射程 +1 (TURRET_RANGE + 1.0)
 	var lens_cell := Vector2i(5, 6)
 	if not MatchState.buy_and_place_building("room_101", "focus_lens", "player", lens_cell):
 		printerr("FAILED: Failed to build focus_lens")
 		turret.queue_free()
 		grid.queue_free()
 		return false
-	if not is_equal_approx(turret.get_effective_range(), 5.0):
+	if not is_equal_approx(turret.get_effective_range(), MatchState.TURRET_RANGE + 1.0):
 		printerr("FAILED: Focus lens did not increase range by 1, got: ", turret.get_effective_range())
 		turret.queue_free()
 		grid.queue_free()
@@ -2121,15 +2125,18 @@ func _test_cell_menu_door_hp_bar_and_popups() -> bool:
 	silicic.rank = 3
 	silicic.room_id = "room_101"
 	grid.add_turret(silicic_cell, silicic)
+	silicic.rank = 3
 	main_scene.handle_cell_click(silicic_cell)
-	if _cell_menu_title(main_scene.current_menu_items) != "硅酸 III":
-		printerr("FAILED: Silicic III title must be 硅酸 III, got: ", _cell_menu_title(main_scene.current_menu_items))
+	var title3: String = _cell_menu_title(main_scene.current_menu_items)
+	if not (title3.begins_with("硅酸炮台III") and "攻击：" in title3 and "射程：" in title3 and "效果：" in title3):
+		printerr("FAILED: Silicic III title must match 硅酸炮台III 攻击：xx 射程：xx 效果：xx, got: ", title3)
 		main_scene.queue_free()
 		return false
 	silicic.rank = 5
 	main_scene.handle_cell_click(silicic_cell)
-	if _cell_menu_title(main_scene.current_menu_items) != "胶幕（硅酸 V）":
-		printerr("FAILED: Silicic V title must be 胶幕（硅酸 V）, got: ", _cell_menu_title(main_scene.current_menu_items))
+	var title5: String = _cell_menu_title(main_scene.current_menu_items)
+	if not (title5.begins_with("硅酸炮台V") and "胶幕" in title5 and "攻击：" in title5 and "射程：" in title5 and "效果：" in title5):
+		printerr("FAILED: Silicic V title must match 硅酸炮台V(胶幕)... 攻击：xx 射程：xx 效果：xx, got: ", title5)
 		main_scene.queue_free()
 		return false
 
@@ -2744,4 +2751,848 @@ func _simulate_lv15_ion_gate_v_break(invader: InvaderActor, char_id: String) -> 
 		printerr("FAILED: %s Lv15 failed to break full %d HP Ion Gate V after armor+regen! HP: %d time: %f" % [char_id, ion_hp, MatchState.get_door_hp("room_101"), sim_break_time])
 		return false
 	return true
+
+func _test_optimization_loop_and_combat_feedback() -> bool:
+	print("\n[TEST Optimization] Testing Fallen Room Silence, Retargeting, Popups, and Full Match Defeat...")
+	MatchState.reset_match()
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	# 1. 验证房间沦陷后炮台停火
+	MatchState.claim_room("room_101", "ally_1")
+	var turret := SilicicTurret.new()
+	grid.add_turret(Vector2i(5, 5), turret)
+	turret.init_turret(Vector2i(5, 5), null, grid)
+	turret.room_id = "room_101"
+
+	var dummy_invader := InvaderActor.new()
+	add_child(dummy_invader)
+	dummy_invader.init_actor("invader", "入侵者", Color.RED, Vector2i(5, 6), grid)
+	dummy_invader.visible = true
+	turret.target_invader = dummy_invader
+
+	# 起步矿完好时炮台充能开火
+	var hp_before: int = MatchState.invader_hp
+	turret._process(MatchState.TURRET_FIRE_INTERVAL + 0.1)
+	if MatchState.invader_hp >= hp_before:
+		printerr("FAILED: Turret should fire when starter is alive")
+		dummy_invader.queue_free()
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# 摧毁盟友起步矿，房间沦陷
+	MatchState.damage_starter("room_101", MatchState.STARTER_MAX_HP)
+	if not MatchState.is_room_fallen("room_101"):
+		printerr("FAILED: room_101 should be fallen")
+		dummy_invader.queue_free()
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	var hp_after_fallen: int = MatchState.invader_hp
+	turret._process(MatchState.TURRET_FIRE_INTERVAL * 2.0)
+	if MatchState.invader_hp != hp_after_fallen:
+		printerr("FAILED: Turret in fallen room must NOT fire! Got damage, new HP: ", MatchState.invader_hp)
+		dummy_invader.queue_free()
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# 2. 验证盟友起步矿被毁后，入侵者涨经验并转火未沦陷房间
+	var invader_agent := InvaderActor.new()
+	add_child(invader_agent)
+	invader_agent.init_actor("invader", "入侵者", Color.RED, Vector2i(3, 4), grid)
+	invader_agent.target_room_id = "room_101"
+	invader_agent.invader_state = InvaderActor.InvaderState.ATTACKING_STARTER
+	var xp_before: int = invader_agent.invader_xp
+
+	# 触发起步矿彻底击破结算
+	invader_agent._process_attacking_starter(0.1)
+	if invader_agent.invader_xp <= xp_before:
+		printerr("FAILED: Invader should gain XP on ally room fall")
+		dummy_invader.queue_free()
+		invader_agent.queue_free()
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	if invader_agent.invader_state == InvaderActor.InvaderState.IDLE:
+		printerr("FAILED: Invader should retarget instead of going permanently IDLE")
+		dummy_invader.queue_free()
+		invader_agent.queue_free()
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	if invader_agent.target_room_id == "room_101":
+		printerr("FAILED: Invader must retarget away from already fallen room_101")
+		dummy_invader.queue_free()
+		invader_agent.queue_free()
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# 3. 验证战斗跳字生命周期
+	grid.combat_popups.clear()
+	grid.spawn_combat_popup(Vector2i(6, 12), "-50", Color.ORANGE)
+	if grid.combat_popups.is_empty():
+		printerr("FAILED: Combat popup should be created")
+		dummy_invader.queue_free()
+		invader_agent.queue_free()
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	grid._process(grid.COMBAT_POPUP_LIFETIME + 0.1)
+	if not grid.combat_popups.is_empty():
+		printerr("FAILED: Combat popups should expire after lifetime")
+		dummy_invader.queue_free()
+		invader_agent.queue_free()
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# 4. 验证所有房间全沦陷时对局 DEFEAT
+	for r in grid.get_all_rooms():
+		MatchState.damage_starter(r.room_id, MatchState.STARTER_MAX_HP)
+	if MatchState.game_result != MatchState.GameResult.DEFEAT:
+		printerr("FAILED: All starters destroyed should trigger DEFEAT")
+		dummy_invader.queue_free()
+		invader_agent.queue_free()
+		turret.queue_free()
+		grid.queue_free()
+		return false
+
+	print("PASS: Fallen room silence, retargeting with XP reward, combat popups, and match defeat verified.")
+	dummy_invader.queue_free()
+	invader_agent.queue_free()
+	turret.queue_free()
+	grid.queue_free()
+	return true
+
+func _test_new_optimization_features() -> bool:
+	print("\n[TEST New Features] Testing Freeze, Door Regen & Full-Heal Upgrade, Mine Upgrades, Demolish 50% Refund...")
+	MatchState.reset_match()
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	# 1. 验证开局准备阶段冻结行动
+	if not MatchState.is_in_freeze():
+		printerr("FAILED: Match should be in freeze phase immediately after reset")
+		grid.queue_free()
+		return false
+	if MatchState.startup_freeze <= 0.0:
+		printerr("FAILED: startup_freeze must be > 0.0")
+		grid.queue_free()
+		return false
+
+	# 推进心跳跳过准备冻结期
+	MatchState._process(MatchState.startup_freeze + 0.1)
+	if MatchState.is_in_freeze():
+		printerr("FAILED: Freeze should expire after startup_freeze duration")
+		grid.queue_free()
+		return false
+
+	# 2. 验证门开局自带回血
+	MatchState.claim_room("room_101", "player")
+	var initial_regen: int = MatchState.get_door_regen_rate("room_101")
+	if initial_regen <= 0:
+		printerr("FAILED: Starter door must have auto-regen > 0")
+		grid.queue_free()
+		return false
+
+	# 3. 验证每次升级门血量回满
+	MatchState.add_money(50000)
+	MatchState.damage_door("room_101", 60)
+	var hp_damaged: int = MatchState.get_door_hp("room_101")
+	if hp_damaged >= MatchState.get_door_max_hp("room_101"):
+		printerr("FAILED: Door was not damaged")
+		grid.queue_free()
+		return false
+	var upgraded: bool = MatchState.upgrade_door("room_101", "player")
+	if not upgraded:
+		printerr("FAILED: Door upgrade failed")
+		grid.queue_free()
+		return false
+	var max_after_upgrade: int = MatchState.get_door_max_hp("room_101")
+	if MatchState.get_door_hp("room_101") != max_after_upgrade:
+		printerr("FAILED: Door upgrade must fully restore HP to max! got %d expected %d" % [MatchState.get_door_hp("room_101"), max_after_upgrade])
+		grid.queue_free()
+		return false
+
+	# 4. 验证矿山原地升级（铁矿 -> 铜矿 -> 银矿 -> 金矿 -> 铀矿）
+	var mine_cell := Vector2i(5, 5)
+	if not MatchState.buy_and_place_building("room_101", "iron_mine", "player", mine_cell):
+		printerr("FAILED: Placing iron mine failed")
+		grid.queue_free()
+		return false
+	
+	var can_upg_iron := MatchState.can_upgrade_mine("room_101", "player", mine_cell)
+	if not can_upg_iron.get("success", false) or can_upg_iron.get("next_id", "") != "tungsten_mine":
+		printerr("FAILED: Iron mine should be upgradable to tungsten mine, got: ", can_upg_iron)
+		grid.queue_free()
+		return false
+	
+	var money_before_upg: int = MatchState.get_actor_money("player")
+	if not MatchState.upgrade_mine("room_101", "player", mine_cell):
+		printerr("FAILED: upgrade_mine to tungsten failed")
+		grid.queue_free()
+		return false
+	var b_upg = MatchState.cell_to_building[mine_cell]
+	if b_upg["id"] != "tungsten_mine":
+		printerr("FAILED: Building id not updated to tungsten_mine")
+		grid.queue_free()
+		return false
+	if MatchState.get_actor_money("player") >= money_before_upg:
+		printerr("FAILED: Money was not deducted for mine upgrade")
+		grid.queue_free()
+		return false
+
+	# 5. 验证拆除非起步矿建筑并回收 50% 资源
+	var money_before_demo: int = MatchState.get_actor_money("player")
+	var demo_check := MatchState.can_demolish("room_101", "player", mine_cell, grid)
+	if not demo_check.get("success", false):
+		printerr("FAILED: Copper mine should be demolishable, got: ", demo_check)
+		grid.queue_free()
+		return false
+	var refund_m: int = demo_check.get("refund_money", 0)
+	if refund_m <= 0:
+		printerr("FAILED: Demolish refund must be > 0, got: ", refund_m)
+		grid.queue_free()
+		return false
+	if not MatchState.demolish_building("room_101", "player", mine_cell, grid):
+		printerr("FAILED: Demolish building failed")
+		grid.queue_free()
+		return false
+	if MatchState.cell_to_building.has(mine_cell):
+		printerr("FAILED: Demolished cell should no longer have building")
+		grid.queue_free()
+		return false
+	if MatchState.get_actor_money("player") != money_before_demo + refund_m:
+		printerr("FAILED: Refund money not credited accurately")
+		grid.queue_free()
+		return false
+
+	# 6. 验证起步矿不可拆除
+	var starter_c: Vector2i = Vector2i(3, 4)
+	var starter_demo_check := MatchState.can_demolish("room_101", "player", starter_c, grid)
+	if starter_demo_check.get("success", false):
+		printerr("FAILED: Starter mine must NOT be demolishable!")
+		grid.queue_free()
+		return false
+
+	# 7. 验证炮台升级射程递增
+	for sub in ["silicic", "carbonate", "hydrochloric", "perchloric"]:
+		var prev_range: float = 0.0
+		for rk in range(1, 6):
+			var stats: Dictionary = MatchState.get_turret_stats(sub, rk)
+			var cur_range: float = float(stats.get("range", 0.0))
+			if cur_range <= prev_range:
+				printerr("FAILED: Turret range must increase with rank! sub=%s rank=%d cur=%f prev=%f" % [sub, rk, cur_range, prev_range])
+				grid.queue_free()
+				return false
+			prev_range = cur_range
+
+	# 8. 验证门回血能力随升级持续增强 (30 档严格单调递增)
+	var prev_door_regen: int = -1
+	for k in MatchState.HATCH_KINDS:
+		for rk in range(1, 6):
+			var h_stats: Dictionary = MatchState.get_hatch_stats(k, rk)
+			var cur_reg: int = int(h_stats.get("regen", 0))
+			if cur_reg <= prev_door_regen:
+				printerr("FAILED: Hatch regen must strictly increase across all 30 ranks! kind=%s rank=%d cur=%d prev=%d" % [k, rk, cur_reg, prev_door_regen])
+				grid.queue_free()
+				return false
+			prev_door_regen = cur_reg
+
+	# 9. 验证最高等级敌人可打破最高等级舱门 (Ion Gate V)
+	var ion_gate_v_stats: Dictionary = MatchState.get_hatch_stats("ion_gate", 5)
+	var max_hatch_hp: int = int(ion_gate_v_stats.get("max_hp", 30000))
+	var max_hatch_armor: int = int(ion_gate_v_stats.get("armor", 225))
+	var max_hatch_regen: int = int(ion_gate_v_stats.get("regen", 114))
+	var lv15_atk: int = MatchState.INVADER_LV15_ATTACK_DAMAGE
+	var lv15_interval: float = MatchState.INVADER_LV15_ATTACK_INTERVAL
+	var single_hit_damage: int = maxi(1, lv15_atk - max_hatch_armor)
+	var base_dps: float = float(single_hit_damage) / lv15_interval
+	var net_dps: float = base_dps - float(max_hatch_regen)
+	if net_dps <= 0.0:
+		printerr("FAILED: Lv 15 invader must deal net positive DPS to Ion Gate V! base_dps=%f regen=%d net=%f" % [base_dps, max_hatch_regen, net_dps])
+		grid.queue_free()
+		return false
+	var time_to_breach: float = float(max_hatch_hp) / net_dps
+	if time_to_breach > 360.0:
+		printerr("FAILED: Lv 15 invader takes too long to breach Ion Gate V: %f seconds" % time_to_breach)
+		grid.queue_free()
+		return false
+
+	# 10. 验证「粒子加速器」与「取款机」建造、效果与回收
+	MatchState.set_actor_money("player", 5000)
+	MatchState.set_actor_feedstock("player", 500)
+	var pa_cell := Vector2i(5, 7)
+	if not MatchState.buy_and_place_building("room_101", "particle_accelerator", "player", pa_cell):
+		printerr("FAILED: Failed to build particle_accelerator")
+		grid.queue_free()
+		return false
+	if not MatchState.has_particle_accelerator("room_101"):
+		printerr("FAILED: MatchState.has_particle_accelerator must return true")
+		grid.queue_free()
+		return false
+
+	# 验证粒子加速器效果：增加炮台 50% 等攻速 (即有效射击间隔变为 1.0 / 1.5)
+	var test_turret := SilicicTurret.new()
+	test_turret.substance = "silicic"
+	test_turret.rank = 1
+	test_turret.room_id = "room_101"
+	test_turret.grid_cell = Vector2i(5, 8)
+	test_turret.apply_stats()
+	var base_interval: float = test_turret.fire_interval
+	var eff_interval: float = test_turret.get_effective_interval()
+	if not is_equal_approx(eff_interval, base_interval * (1.0 / 1.5)):
+		printerr("FAILED: Particle accelerator must reduce turret interval to base / 1.5! got=%f expected=%f" % [eff_interval, base_interval * (1.0 / 1.5)])
+		test_turret.queue_free()
+		grid.queue_free()
+		return false
+	test_turret.queue_free()
+
+	# 验证粒子加速器 50% 拆除回收
+	var feedstock_before_pa_demo: int = MatchState.get_actor_feedstock("player")
+	var pa_demo_check: Dictionary = MatchState.can_demolish("room_101", "player", pa_cell, grid)
+	if not pa_demo_check.get("success", false) or int(pa_demo_check.get("refund_feedstock", 0)) != 60:
+		printerr("FAILED: Particle accelerator demo refund must be 60 feedstock, got: ", pa_demo_check)
+		grid.queue_free()
+		return false
+	MatchState.demolish_building("room_101", "player", pa_cell, grid)
+	if MatchState.get_actor_feedstock("player") != feedstock_before_pa_demo + 60:
+		printerr("FAILED: Particle accelerator demolish did not refund 60 feedstock")
+		grid.queue_free()
+		return false
+
+	# 验证取款机建造与周期收益
+	var atm_cell := Vector2i(5, 7)
+	if not MatchState.buy_and_place_building("room_101", "atm", "player", atm_cell):
+		printerr("FAILED: Failed to build atm")
+		grid.queue_free()
+		return false
+	var money_before_atm: int = MatchState.get_actor_money("player")
+	MatchState.building_income_timer["room_101"] = 0.0
+	MatchState._process(MatchState.STARTER_INCOME_INTERVAL)
+	if MatchState.get_actor_money("player") < money_before_atm + 200:
+		printerr("FAILED: ATM must yield 200 money per cycle")
+		grid.queue_free()
+		return false
+	# 取款机回收 50% (原价 1000 金币 + 40 原料 -> 回收 500 金币 + 20 原料)
+	var atm_demo_check: Dictionary = MatchState.can_demolish("room_101", "player", atm_cell, grid)
+	if int(atm_demo_check.get("refund_money", 0)) != 500 or int(atm_demo_check.get("refund_feedstock", 0)) != 20:
+		printerr("FAILED: ATM demo refund must be 500 money and 20 feedstock, got: ", atm_demo_check)
+		grid.queue_free()
+		return false
+	MatchState.demolish_building("room_101", "player", atm_cell, grid)
+
+	# 11. 验证物品说明格式（炮台说明、粒子加速器说明、升级与摧毁）
+	var test_substance := "perchloric"
+	var test_title: String = MatchState.get_turret_cell_title(test_substance, 4)
+	if not (test_title.begins_with("高氯酸炮台IV") and "攻击：" in test_title and "射程：" in test_title and "效果：" in test_title):
+		printerr("FAILED: Turret title format mismatch: ", test_title)
+		grid.queue_free()
+		return false
+	var empty_items: Array = CellMenu.items_for_cell(Vector2i(6, 6), grid, "player")
+	var pa_menu_item: Dictionary = {}
+	for it in empty_items:
+		if str(it.get("id", "")).ends_with("particle_accelerator"):
+			pa_menu_item = it
+			break
+	if pa_menu_item.is_empty() or not str(pa_menu_item.get("label", "")).contains("粒子加速器 效果：增加炮台50%等攻速"):
+		printerr("FAILED: Particle accelerator menu label mismatch: ", pa_menu_item)
+		grid.queue_free()
+		return false
+
+	# 12. 验证起步矿解锁视角拖动
+	var main_scene: MainGame = load("res://scenes/main.tscn").instantiate()
+	add_child(main_scene)
+	if main_scene.is_camera_drag_unlocked:
+		printerr("FAILED: Camera drag should start locked")
+		main_scene.queue_free()
+		grid.queue_free()
+		return false
+	var r101: RoomData = grid.get_room_by_id("room_101")
+	main_scene.player.current_cell = r101.starter_cells[0]
+	main_scene.player.position = grid.cell_to_world(r101.starter_cells[0])
+	main_scene._process(0.016)
+	if not main_scene.is_camera_drag_unlocked:
+		printerr("FAILED: Camera drag should be unlocked once player is on room starter cell")
+		main_scene.queue_free()
+		grid.queue_free()
+		return false
+	main_scene.queue_free()
+
+	print("PASS: Startup freeze, door auto-regen, full-heal upgrade, mine step upgrade, 50% demolish refund, range growth, 30-rank monotonic regen, Lv15 door break, ATM & accelerator, and camera drag unlock verified.")
+	grid.queue_free()
+	return true
+
+func _test_audit_and_deep_regression() -> bool:
+	print("\n[TEST Audit & Deep Regression] Testing Multi-tier Refund, Accelerator Stacking, Drag UX & Door Auto-Regen Loop...")
+	MatchState.reset_match()
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	for r in grid.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name, r.interior_rect, r.starter_cells)
+
+	MatchState.claim_room("room_101", "player")
+	MatchState.set_actor_money("player", 10000)
+	MatchState.set_actor_feedstock("player", 1000)
+
+	# 1. 验证多阶炮台拆除累计回收 50%
+	var turret_cell := Vector2i(5, 5)
+	var t := SilicicTurret.new()
+	t.substance = "silicic"
+	t.rank = 1
+	t.room_id = "room_101"
+	t.grid_cell = turret_cell
+	t.total_cost_money = MatchState.TURRET_COST
+	t.total_cost_feedstock = 0
+	grid.add_turret(turret_cell, t)
+
+	# 升级到 II (80金币: 50 + 1*30)
+	var up1: bool = MatchState.upgrade_turret(t)
+	if not up1 or t.total_cost_money != 180:
+		printerr("FAILED: Turret rank 2 cost tracking failed, total_cost_money=", t.total_cost_money)
+		t.queue_free()
+		grid.queue_free()
+		return false
+	
+	# 升级到 III (110金币: 50 + 2*30)
+	var up2: bool = MatchState.upgrade_turret(t)
+	if not up2 or t.total_cost_money != 290:
+		printerr("FAILED: Turret rank 3 cost tracking failed, total_cost_money=", t.total_cost_money)
+		t.queue_free()
+		grid.queue_free()
+		return false
+
+	var demo_check: Dictionary = MatchState.can_demolish("room_101", "player", turret_cell, grid)
+	if int(demo_check.get("refund_money", 0)) != 145:
+		printerr("FAILED: Turret multi-tier demolish refund must be 145 (50% of 290), got: ", demo_check.get("refund_money", 0))
+		t.queue_free()
+		grid.queue_free()
+		return false
+	MatchState.demolish_building("room_101", "player", turret_cell, grid)
+
+	# 2. 验证化工厂多阶升级拆除累计回收 50%
+	var plant_cell := Vector2i(5, 6)
+	if not MatchState.buy_and_place_building("room_101", "chem_plant", "player", plant_cell):
+		printerr("FAILED: Chem plant placement failed")
+		grid.queue_free()
+		return false
+	# 化工厂 I 原价 200
+	var plant_demo_1: Dictionary = MatchState.can_demolish("room_101", "player", plant_cell, grid)
+	if int(plant_demo_1.get("refund_money", 0)) != 100:
+		printerr("FAILED: Chem plant I refund must be 100, got: ", plant_demo_1.get("refund_money", 0))
+		grid.queue_free()
+		return false
+	# 升级到 II (80金币, 总计 280)
+	MatchState.upgrade_chem_plant("room_101", "player", plant_cell)
+	var plant_demo_2: Dictionary = MatchState.can_demolish("room_101", "player", plant_cell, grid)
+	if int(plant_demo_2.get("refund_money", 0)) != 140:
+		printerr("FAILED: Chem plant II refund must be 140, got: ", plant_demo_2.get("refund_money", 0))
+		grid.queue_free()
+		return false
+	# 升级到 III (110金币, 总计 390)
+	MatchState.upgrade_chem_plant("room_101", "player", plant_cell)
+	var plant_demo_3: Dictionary = MatchState.can_demolish("room_101", "player", plant_cell, grid)
+	if int(plant_demo_3.get("refund_money", 0)) != 195:
+		printerr("FAILED: Chem plant III refund must be 195, got: ", plant_demo_3.get("refund_money", 0))
+		grid.queue_free()
+		return false
+	MatchState.demolish_building("room_101", "player", plant_cell, grid)
+
+	# 3. 验证多个粒子加速器叠加效果 (1台加成50%, 2台加成100%)
+	var test_turret := SilicicTurret.new()
+	test_turret.substance = "silicic"
+	test_turret.rank = 1
+	test_turret.room_id = "room_101"
+	test_turret.grid_cell = Vector2i(4, 5)
+	test_turret.apply_stats()
+	var base_int: float = test_turret.fire_interval
+
+	# 0 台: 1.0x
+	if not is_equal_approx(test_turret.get_effective_interval(), base_int):
+		printerr("FAILED: Turret interval with 0 accelerators must equal base interval")
+		test_turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# 建造第 1 台粒子加速器: 攻速 +50% (间隔 / 1.5)
+	var pa1_cell := Vector2i(5, 7)
+	MatchState.buy_and_place_building("room_101", "particle_accelerator", "player", pa1_cell)
+	var int_1: float = test_turret.get_effective_interval()
+	if not is_equal_approx(int_1, base_int * (1.0 / 1.5)):
+		printerr("FAILED: 1 accelerator should multiply interval by 1/1.5, got: ", int_1)
+		test_turret.queue_free()
+		grid.queue_free()
+		return false
+
+	# 建造第 2 台粒子加速器: 攻速 +100% (间隔 / 2.0)
+	var pa2_cell := Vector2i(6, 7)
+	MatchState.buy_and_place_building("room_101", "particle_accelerator", "player", pa2_cell)
+	var int_2: float = test_turret.get_effective_interval()
+	if not is_equal_approx(int_2, base_int * 0.5):
+		printerr("FAILED: 2 accelerators should multiply interval by 0.5, got: ", int_2)
+		test_turret.queue_free()
+		grid.queue_free()
+		return false
+
+	test_turret.queue_free()
+	MatchState.demolish_building("room_101", "player", pa1_cell, grid)
+	MatchState.demolish_building("room_101", "player", pa2_cell, grid)
+
+	# 4. 验证舱门自动回血持续平稳恢复至满血，且不超过上限
+	var door_max: int = MatchState.get_door_max_hp("room_101")
+	var regen_rate: int = MatchState.get_door_regen_rate("room_101")
+	MatchState.damage_door("room_101", 30)
+	var hp_low: int = MatchState.get_door_hp("room_101")
+	if hp_low != door_max - 30:
+		printerr("FAILED: Door damage failed to set expected HP")
+		grid.queue_free()
+		return false
+
+	# 模拟心跳累加 1 秒，回血 regen_rate
+	MatchState._process(1.0)
+	var hp_step1: int = MatchState.get_door_hp("room_101")
+	if hp_step1 != hp_low + regen_rate:
+		printerr("FAILED: Door should heal by regen_rate in 1s, got: %d expected: %d" % [hp_step1, hp_low + regen_rate])
+		grid.queue_free()
+		return false
+
+	# 持续推进直到回满
+	for _step in range(10):
+		MatchState._process(1.0)
+	if MatchState.get_door_hp("room_101") != door_max:
+		printerr("FAILED: Door should be fully healed and capped at max_hp, got: %d expected: %d" % [MatchState.get_door_hp("room_101"), door_max])
+		grid.queue_free()
+		return false
+
+	# 5. 验证视角拖拽关闭菜单与边界安全
+	var main_scene: MainGame = load("res://scenes/main.tscn").instantiate()
+	add_child(main_scene)
+	main_scene.is_camera_drag_unlocked = true
+	main_scene.handle_cell_click(Vector2i(5, 5))
+	if not main_scene.cell_menu_open:
+		printerr("FAILED: Cell menu should be open on handle_cell_click")
+		main_scene.queue_free()
+		grid.queue_free()
+		return false
+
+	# 模拟鼠标移动拖拽 (>6px)
+	var drag_btn_event := InputEventMouseButton.new()
+	drag_btn_event.button_index = MOUSE_BUTTON_LEFT
+	drag_btn_event.pressed = true
+	drag_btn_event.position = Vector2(200, 200)
+	main_scene._unhandled_input(drag_btn_event)
+
+	var drag_motion_event := InputEventMouseMotion.new()
+	drag_motion_event.position = Vector2(300, 300)
+	main_scene._unhandled_input(drag_motion_event)
+
+	if main_scene.cell_menu_open:
+		printerr("FAILED: Dragging camera must auto-close open cell menu")
+		main_scene.queue_free()
+		grid.queue_free()
+		return false
+	if main_scene.camera.position.x < 0.0 or main_scene.camera.position.y < 0.0:
+		printerr("FAILED: Camera position clamped out of bounds during drag: ", main_scene.camera.position)
+		main_scene.queue_free()
+		grid.queue_free()
+		return false
+	main_scene.queue_free()
+
+	# 6. 验证全 9 种酸各 5 阶（共 45 种状态）物品抬头格式完整合规
+	for sub in MatchState.SUBSTANCE_NAMES.keys():
+		for rk in range(1, 6):
+			var title_str: String = MatchState.get_turret_cell_title(sub, rk)
+			var sub_cn: String = MatchState.SUBSTANCE_NAMES[sub]
+			if not title_str.contains(sub_cn + "炮台"):
+				printerr("FAILED: Turret title missing prefix for sub=%s rk=%d: %s" % [sub, rk, title_str])
+				grid.queue_free()
+				return false
+			if not ("攻击：" in title_str and "射程：" in title_str and "效果：" in title_str):
+				printerr("FAILED: Turret title missing stats fields for sub=%s rk=%d: %s" % [sub, rk, title_str])
+				grid.queue_free()
+				return false
+			var eff_desc: String = MatchState.get_turret_effect_desc(sub)
+			if eff_desc.strip_edges() == "":
+				printerr("FAILED: Turret effect desc must not be empty for sub: ", sub)
+				grid.queue_free()
+				return false
+
+	# 7. 验证敌人初始血量加厚且与炮台威力匹配呈倍数增长
+	var init_hp: int = MatchState.get_invader_max_hp(1)
+	if init_hp < 1000:
+		printerr("FAILED: Initial invader HP must be at least 1000 (currently %d)" % init_hp)
+		grid.queue_free()
+		return false
+	var prev_hp: int = init_hp
+	for lvl in range(2, 16):
+		var cur_lvl_hp: int = MatchState.get_invader_max_hp(lvl)
+		var ratio: float = float(cur_lvl_hp) / float(prev_hp)
+		if ratio < 1.10 or ratio > 1.15:
+			printerr("FAILED: Invader HP must grow by multiple ~1.12 per level! lvl=%d cur=%d prev=%d ratio=%f" % [lvl, cur_lvl_hp, prev_hp, ratio])
+			grid.queue_free()
+			return false
+		prev_hp = cur_lvl_hp
+	var final_hp: int = MatchState.get_invader_max_hp(15)
+	if final_hp < 4800 or final_hp > 5050:
+		printerr("FAILED: Invader Lv 15 HP must reach ~4887 to match endgame turrets, got: %d" % final_hp)
+		grid.queue_free()
+		return false
+
+	print("PASS: Multi-tier demolish refund, multi-accelerator scaling, continuous door regen, drag menu auto-close, 45-turret title format, and multiplicative invader HP audits all verified.")
+	grid.queue_free()
+	return true
+
+func _test_hatch_and_invader_balance() -> bool:
+	print("\n[TEST Balance] Testing Invader Leveling Curve and 30-Rank Hatch HP Echelons...")
+	MatchState.reset_match()
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	for r in grid.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name, r.interior_rect)
+	MatchState.claim_room("room_101", "player")
+
+	var invader := InvaderActor.new()
+	add_child(invader)
+	invader.init_actor("invader", "入侵者", Color.RED, grid.invader_spawn_cell, grid)
+
+	# =========================================================================
+	# 验收项 1: Lv.3～4 侵入者在无炮火支援下，对 6 级门（液氮帘 I）单次持续拆门可在 6～10 秒内击破
+	# =========================================================================
+	var stats_ln2: Dictionary = MatchState.get_hatch_stats("ln2_curtain", 1)
+	print("  [Check 1] 6 级门（液氮帘 I）配置: HP=%d, armor=%d, regen=%d" % [stats_ln2["max_hp"], stats_ln2["armor"], stats_ln2["regen"]])
+
+	# 1.1 测试 Lv.3 敌人拆液氮帘 I
+	MatchState.door_kind["room_101"] = "ln2_curtain"
+	MatchState.door_rank["room_101"] = 1
+	MatchState.door_max_hp["room_101"] = stats_ln2["max_hp"]
+	MatchState.door_hp["room_101"] = stats_ln2["max_hp"]
+	MatchState.door_armor["room_101"] = stats_ln2["armor"]
+	MatchState.door_regen["room_101"] = stats_ln2["regen"]
+	MatchState.door_regen_timer["room_101"] = 0.0
+	MatchState.door_broken["room_101"] = false
+
+	invader.invader_level = 3
+	invader.invader_xp = 0
+	invader.invader_xp_to_next = 99999
+	invader.target_room_id = "room_101"
+	invader.invader_state = InvaderActor.InvaderState.STOPPED_AT_DOOR
+	invader.is_moving = false
+	invader.attack_timer = 0.0
+
+	var time_lv3: float = 0.0
+	var sim_step: float = 0.05
+	while not MatchState.is_door_broken("room_101") and MatchState.get_door_hp("room_101") > 0 and time_lv3 < 30.0:
+		invader._process(sim_step)
+		MatchState._process(sim_step)
+		time_lv3 += sim_step
+
+	print("  Lv.3 侵入者击破 6 级门（液氮帘 I）耗时: %.2f 秒" % time_lv3)
+	if time_lv3 < 6.0 or time_lv3 > 10.0:
+		printerr("FAILED: Lv.3 invader door break time must be in [6, 10] seconds, got: %.2f" % time_lv3)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 1.2 测试 Lv.4 敌人拆液氮帘 I
+	MatchState.door_kind["room_101"] = "ln2_curtain"
+	MatchState.door_rank["room_101"] = 1
+	MatchState.door_max_hp["room_101"] = stats_ln2["max_hp"]
+	MatchState.door_hp["room_101"] = stats_ln2["max_hp"]
+	MatchState.door_armor["room_101"] = stats_ln2["armor"]
+	MatchState.door_regen["room_101"] = stats_ln2["regen"]
+	MatchState.door_regen_timer["room_101"] = 0.0
+	MatchState.door_broken["room_101"] = false
+
+	invader.invader_level = 4
+	invader.invader_xp = 0
+	invader.invader_xp_to_next = 99999
+	invader.target_room_id = "room_101"
+	invader.invader_state = InvaderActor.InvaderState.STOPPED_AT_DOOR
+	invader.is_moving = false
+	invader.attack_timer = 0.0
+
+	var time_lv4: float = 0.0
+	while not MatchState.is_door_broken("room_101") and MatchState.get_door_hp("room_101") > 0 and time_lv4 < 30.0:
+		invader._process(sim_step)
+		MatchState._process(sim_step)
+		time_lv4 += sim_step
+
+	print("  Lv.4 侵入者击破 6 级门（液氮帘 I）耗时: %.2f 秒" % time_lv4)
+	if time_lv4 < 6.0 or time_lv4 > 10.0:
+		printerr("FAILED: Lv.4 invader door break time must be in [6, 10] seconds, got: %.2f" % time_lv4)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# =========================================================================
+	# 验收项 2: 侵入者从 Lv.4 升至 Lv.10 所需打门累计伤害/时长相比旧版拉长约 1.8～2.5 倍
+	# =========================================================================
+	# 旧版基准（40 * 1.35 增长曲线，每次 15 XP）:
+	#   总攻击次数 96 次，累计基础伤害 8492，累计时长 72.70 秒
+	const OLD_BASELINE_DMG: float = 8492.0
+	const OLD_BASELINE_TIME: float = 72.70
+
+	var sim_cur_lv: int = 4
+	var sim_cur_xp: int = 0
+	var sim_next_xp: int = MatchState.get_invader_xp_to_next(sim_cur_lv)
+	var new_total_hits: int = 0
+	var new_total_dmg: int = 0
+	var new_total_time: float = 0.0
+
+	var sim_invader := InvaderActor.new()
+	while sim_cur_lv < 10:
+		new_total_hits += 1
+		sim_invader.invader_level = sim_cur_lv
+		var dmg: int = sim_invader.get_base_attack_damage()
+		var interval: float = sim_invader.get_base_attack_interval()
+		new_total_dmg += dmg
+		new_total_time += interval
+		sim_cur_xp += 15
+		while sim_cur_xp >= sim_next_xp and sim_cur_lv < 10:
+			sim_cur_xp -= sim_next_xp
+			sim_cur_lv += 1
+			if sim_cur_lv < 10:
+				sim_next_xp = MatchState.get_invader_xp_to_next(sim_cur_lv)
+	sim_invader.queue_free()
+
+	var dmg_ratio: float = float(new_total_dmg) / OLD_BASELINE_DMG
+	var time_ratio: float = new_total_time / OLD_BASELINE_TIME
+	print("  [Check 2] Lv.4->10 升级放缓审计: 攻击次数 %d (旧 96), 累计伤害 %d (旧 8492, 倍数 %.3fx), 累计时长 %.2fs (旧 72.70s, 倍数 %.3fx)" % [
+		new_total_hits, new_total_dmg, dmg_ratio, new_total_time, time_ratio
+	])
+
+	if dmg_ratio < 1.8 or dmg_ratio > 2.5:
+		printerr("FAILED: Invader Lv.4->10 cumulative damage ratio must be in [1.8, 2.5], got: %.3f" % dmg_ratio)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	if time_ratio < 1.8 or time_ratio > 2.5:
+		printerr("FAILED: Invader Lv.4->10 time ratio must be in [1.8, 2.5], got: %.3f" % time_ratio)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# =========================================================================
+	# 验收项 3: 7 级门（沸石瓣 I）HP 相比 6 级门呈现翻倍跃升，面对 5～7 级敌人可支撑 30 秒以上
+	# =========================================================================
+	var stats_zeolite: Dictionary = MatchState.get_hatch_stats("zeolite_flap", 1)
+	var hp_ln2: int = int(stats_ln2["max_hp"])
+	var hp_zeo: int = int(stats_zeolite["max_hp"])
+	print("  [Check 3] 6 级门 HP: %d, 7 级门（沸石瓣 I）HP: %d (提升 %.2f 倍)" % [hp_ln2, hp_zeo, float(hp_zeo) / float(hp_ln2)])
+
+	if hp_zeo < hp_ln2 * 2:
+		printerr("FAILED: Zeolite flap I HP (%d) must leap at least double LN2 curtain I HP (%d)" % [hp_zeo, hp_ln2])
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 面对 Lv.5, Lv.6, Lv.7 敌人支撑 30 秒以上
+	for test_lv in [5, 6, 7]:
+		MatchState.door_kind["room_101"] = "zeolite_flap"
+		MatchState.door_rank["room_101"] = 1
+		MatchState.door_max_hp["room_101"] = stats_zeolite["max_hp"]
+		MatchState.door_hp["room_101"] = stats_zeolite["max_hp"]
+		MatchState.door_armor["room_101"] = stats_zeolite["armor"]
+		MatchState.door_regen["room_101"] = stats_zeolite["regen"]
+		MatchState.door_regen_timer["room_101"] = 0.0
+		MatchState.door_broken["room_101"] = false
+
+		invader.invader_level = test_lv
+		invader.invader_xp = 0
+		invader.invader_xp_to_next = 99999
+		invader.target_room_id = "room_101"
+		invader.invader_state = InvaderActor.InvaderState.STOPPED_AT_DOOR
+		invader.is_moving = false
+		invader.attack_timer = 0.0
+
+		var survived_time: float = 0.0
+		while not MatchState.is_door_broken("room_101") and MatchState.get_door_hp("room_101") > 0 and survived_time < 30.0:
+			invader._process(sim_step)
+			MatchState._process(sim_step)
+			survived_time += sim_step
+
+		var remaining_hp: int = MatchState.get_door_hp("room_101")
+		print("  面对 Lv.%d 敌人持续 30 秒测试: 存活 %.1f 秒, 剩余 HP=%d/%d" % [test_lv, survived_time, remaining_hp, hp_zeo])
+		if MatchState.is_door_broken("room_101") or remaining_hp <= 0 or survived_time < 30.0:
+			printerr("FAILED: Zeolite flap I must sustain 30+ seconds against Lv.%d invader! Broke at %.2fs" % [test_lv, survived_time])
+			invader.queue_free()
+			grid.queue_free()
+			return false
+
+	# =========================================================================
+	# 验收项 4: 15 级敌人对离子栅 V 装甲与回血结算严格保持净 DPS 173
+	# =========================================================================
+	var stats_ion_v: Dictionary = MatchState.get_hatch_stats("ion_gate", 5)
+	var ion_v_armor: int = int(stats_ion_v["armor"])
+	var ion_v_regen: int = int(stats_ion_v["regen"])
+	var lv15_raw: int = MatchState.INVADER_LV15_ATTACK_DAMAGE
+	var lv15_interval: float = MatchState.INVADER_LV15_ATTACK_INTERVAL
+	var lv15_eff: int = MatchState.get_effective_door_damage(lv15_raw, ion_v_armor)
+	var lv15_dps: float = float(lv15_eff) / lv15_interval
+	var net_dps: float = lv15_dps - float(ion_v_regen)
+
+	print("  [Check 4] 离子栅 V 结算: raw=%d, armor=%d, eff=%d, dps=%.1f, regen=%d, 净 DPS=%.2f" % [
+		lv15_raw, ion_v_armor, lv15_eff, lv15_dps, ion_v_regen, net_dps
+	])
+
+	if ion_v_armor != 225:
+		printerr("FAILED: Ion gate V armor must be strictly 225, got: %d" % ion_v_armor)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	if ion_v_regen != 52:
+		printerr("FAILED: Ion gate V regen must be strictly 52, got: %d" % ion_v_regen)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	if not is_equal_approx(net_dps, 173.0):
+		printerr("FAILED: Lv 15 invader net DPS against Ion gate V must be strictly 173.0, got: %.4f" % net_dps)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# =========================================================================
+	# 验收项 5: 全 30 档 HP 与回血严格单调递增性审核
+	# =========================================================================
+	var prev_hatch_hp: int = -1
+	var prev_hatch_reg: int = -1
+	for k in MatchState.HATCH_KINDS:
+		for rk in range(1, 6):
+			var cur_st: Dictionary = MatchState.get_hatch_stats(k, rk)
+			var cur_hp: int = int(cur_st["max_hp"])
+			var cur_reg: int = int(cur_st["regen"])
+			if cur_hp <= prev_hatch_hp:
+				printerr("FAILED: Hatch max HP not strictly increasing! kind=%s rank=%d hp=%d prev=%d" % [k, rk, cur_hp, prev_hatch_hp])
+				invader.queue_free()
+				grid.queue_free()
+				return false
+			if cur_reg <= prev_hatch_reg:
+				printerr("FAILED: Hatch regen not strictly increasing! kind=%s rank=%d reg=%d prev=%d" % [k, rk, cur_reg, prev_hatch_reg])
+				invader.queue_free()
+				grid.queue_free()
+				return false
+			prev_hatch_hp = cur_hp
+			prev_hatch_reg = cur_reg
+
+	print("PASS: Balance verified: Lv.3-4 break LN2 Curtain I in 6-10s, Lv.4-10 leveling slowed ~2.1x, Zeolite Flap I leaped >2x and sustained 30+s, Ion Gate V net DPS strictly locked to 173, and all 30 ranks strictly monotonic.")
+	invader.queue_free()
+	grid.queue_free()
+	return true
+
 
