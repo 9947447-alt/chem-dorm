@@ -97,7 +97,7 @@ func _sync_status_text() -> void:
 	var text: String = " ".join(parts)
 	if text != MatchState.invader_status_text:
 		MatchState.invader_status_text = text
-		MatchState.invader_hp_changed.emit(MatchState.invader_hp, MatchState.get_invader_max_hp())
+		MatchState.invader_hp_changed.emit(MatchState.invader_hp, MatchState.INVADER_MAX_HP)
 
 func _ready() -> void:
 	super._ready()
@@ -130,73 +130,46 @@ func spawn_invader() -> void:
 	_pick_target_and_move()
 
 func _pick_target_and_move() -> void:
-	if grid_manager == null:
-		return
-
-	var active_rooms: Array[RoomData] = []
-	for r in grid_manager.get_all_rooms():
-		if not MatchState.is_room_fallen(r.room_id):
-			active_rooms.append(r)
-
-	if active_rooms.is_empty():
-		invader_state = InvaderState.IDLE
-		is_moving = false
-		move_path.clear()
-		return
-
-	var unbroken_rooms: Array[RoomData] = []
-	for r in active_rooms:
-		if not MatchState.is_door_broken(r.room_id):
-			unbroken_rooms.append(r)
-
-	var pool: Array[RoomData] = unbroken_rooms if not unbroken_rooms.is_empty() else active_rooms
-
 	var player_room_id: String = MatchState.get_player_owned_room_id()
 	var target_room: RoomData = null
-	var min_dist: int = 999999
-	var best_path: Array[Vector2i] = []
-
-	for r in pool:
-		var path := grid_manager.get_invader_path_to_cell(current_cell, r.door_exterior_cell)
-		if not path.is_empty():
-			var weight: int = path.size()
-			if r.room_id == player_room_id:
-				weight -= 1
-			if weight < min_dist:
-				min_dist = weight
-				target_room = r
-				best_path = path
-
-	if target_room == null and not pool.is_empty():
-		target_room = pool[0]
-		best_path = grid_manager.get_invader_path_to_cell(current_cell, target_room.door_exterior_cell)
-
+	if player_room_id != "" and not MatchState.is_door_broken(player_room_id):
+		target_room = grid_manager.get_room_by_id(player_room_id)
+	
 	if target_room != null:
 		target_room_id = target_room.room_id
 		target_exterior_cell = target_room.door_exterior_cell
-		MatchState.invader_target_room_id = target_room_id
+	else:
+		target_exterior_cell = grid_manager.get_closest_door_exterior_to(current_cell)
+		for r in grid_manager.get_all_rooms():
+			if r.door_exterior_cell == target_exterior_cell:
+				target_room_id = r.room_id
+				break
 
-		if not best_path.is_empty():
+	MatchState.invader_target_room_id = target_room_id
+	
+	if target_exterior_cell != Vector2i.ZERO:
+		var path: Array[Vector2i] = grid_manager.get_invader_path_to_cell(current_cell, target_exterior_cell)
+		if not path.is_empty():
 			invader_state = InvaderState.APPROACHING_DOOR
-			set_target_path(best_path)
+			set_target_path(path)
 		else:
 			invader_state = InvaderState.STOPPED_AT_DOOR
+	else:
+		invader_state = InvaderState.STOPPED_AT_DOOR
+	
+	print("Invader spawned at %s, moving towards door exterior %s" % [current_cell, target_exterior_cell])
 
-	print("Invader positioned at %s, targeting room %s exterior %s" % [current_cell, target_room_id, target_exterior_cell])
-
-func add_xp(amount: int, force: bool = false) -> void:
-	# 打门才涨经验，跑路/回血不涨（除破房特殊奖励外）
-	if not force and invader_state != InvaderState.STOPPED_AT_DOOR:
+func add_xp(amount: int) -> void:
+	# 打门才涨经验，跑路/回血不涨
+	if invader_state != InvaderState.STOPPED_AT_DOOR:
 		return
 	invader_xp += amount
 	MatchState.invader_xp = invader_xp
-	while invader_xp >= invader_xp_to_next and invader_level < MatchState.INVADER_LEVEL_CAP:
+	while invader_xp >= invader_xp_to_next and invader_level < 15:
 		invader_xp -= invader_xp_to_next
-		var old_level: int = invader_level
 		invader_level += 1
 		invader_xp_to_next = MatchState.get_invader_xp_to_next(invader_level)
 		MatchState.invader_level = invader_level
-		MatchState.apply_invader_level_up_hp(old_level, invader_level)
 		MatchState.invader_level_up.emit(invader_character, invader_level)
 		MatchState.invader_level_changed.emit(invader_level)
 		print("敌人升级！当前等级: %d [%s]" % [invader_level, display_name])
@@ -273,7 +246,7 @@ func _process(delta: float) -> void:
 			take_damage(int(round(float(p_dps) * 0.5)))
 
 	# 检查低血量撤退至走廊回血点（全状态生效，包括入室拆起步矿）
-	if MatchState.invader_hp <= int(float(MatchState.get_invader_max_hp()) * 0.35):
+	if MatchState.invader_hp <= int(float(MatchState.INVADER_MAX_HP) * 0.35):
 		if invader_state == InvaderState.STOPPED_AT_DOOR or invader_state == InvaderState.APPROACHING_DOOR or invader_state == InvaderState.ATTACKING_STARTER or invader_state == InvaderState.ENTERING_ROOM:
 			_retreat_to_heal_pad()
 
@@ -300,15 +273,12 @@ func _process_healing(delta: float) -> void:
 	heal_tick_timer += delta
 	if heal_tick_timer >= 0.5:
 		heal_tick_timer -= 0.5
-		var new_hp: int = min(MatchState.get_invader_max_hp(), MatchState.invader_hp + 15)
-		var healed: int = new_hp - MatchState.invader_hp
+		var new_hp: int = min(MatchState.INVADER_MAX_HP, MatchState.invader_hp + 15)
 		MatchState.invader_hp = new_hp
-		MatchState.invader_hp_changed.emit(new_hp, MatchState.get_invader_max_hp())
-		if grid_manager != null and healed > 0:
-			grid_manager.spawn_combat_popup(current_cell, "+%d" % healed, Color(0.3, 1.0, 0.4))
+		MatchState.invader_hp_changed.emit(new_hp, MatchState.INVADER_MAX_HP)
 		queue_redraw()
 
-	if MatchState.invader_hp >= int(float(MatchState.get_invader_max_hp()) * 0.9):
+	if MatchState.invader_hp >= int(float(MatchState.INVADER_MAX_HP) * 0.9):
 		# 生命值恢复至安全线，重返战场
 		heal_tick_timer = 0.0
 		_pick_target_and_move()
@@ -379,9 +349,6 @@ func _process_attacking_door(delta: float) -> void:
 			MatchState.damage_door(target_room_id, dmg)
 			if grid_manager != null:
 				grid_manager.queue_redraw()
-				var room_d := grid_manager.get_room_by_id(target_room_id)
-				if room_d != null:
-					grid_manager.spawn_combat_popup(room_d.door_cell, "-%d" % dmg, Color(1.0, 0.65, 0.2))
 
 	if MatchState.is_door_broken(target_room_id):
 		_enter_room_towards_starter()
@@ -447,25 +414,13 @@ func _process_attacking_starter(delta: float) -> void:
 		attack_timer += delta
 		if attack_timer >= MatchState.INVADER_ATTACK_INTERVAL:
 			attack_timer = 0.0
-			var dmg: int = get_base_attack_damage()
-			MatchState.damage_starter(target_room_id, dmg)
+			MatchState.damage_starter(target_room_id, get_base_attack_damage())
 			if grid_manager != null:
 				grid_manager.queue_redraw()
-				var s_room := grid_manager.get_room_by_id(target_room_id)
-				if s_room != null and not s_room.starter_cells.is_empty():
-					grid_manager.spawn_combat_popup(s_room.starter_cells[0], "-%d" % dmg, Color(1.0, 0.35, 0.35))
 	else:
-		if MatchState.game_result != MatchState.GameResult.NONE:
-			invader_state = InvaderState.IDLE
-			is_moving = false
-			move_path.clear()
-			return
-
-		# 盟友房间沦陷：给予入侵者大量经验，并离开该房间转火下一个目标
-		add_xp(60, true)
-		print("房间 %s 沦陷！入侵者获得 60 XP，寻找下一目标。" % target_room_id)
-		attack_timer = 0.0
-		_pick_target_and_move()
+		invader_state = InvaderState.IDLE
+		is_moving = false
+		move_path.clear()
 
 func _advance_path() -> void:
 	if move_path.is_empty():
@@ -519,19 +474,17 @@ func _draw() -> void:
 	draw_rect(Rect2(-radius, -radius, radius * 2.0, radius * 2.0), actor_color)
 	draw_rect(Rect2(-radius, -radius, radius * 2.0, radius * 2.0), Color(1.0, 0.9, 0.2), false, 2.0)
 	
-	# 放大版敌人专属血条与数值 (宽 52, 高 8)
-	var bar_w: float = 52.0
-	var bar_h: float = 8.0
-	var bar_y: float = -radius - 16.0
-	var hp_ratio: float = clampf(float(MatchState.invader_hp) / float(MatchState.get_invader_max_hp()), 0.0, 1.0)
-	var hp_color := Color(0.95, 0.22, 0.22) if hp_ratio > 0.35 else Color(1.0, 0.1, 0.1)
-	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w, bar_h), Color(0.08, 0.09, 0.11))
-	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w * hp_ratio, bar_h), hp_color)
-	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w, bar_h), Color(0.25, 0.28, 0.32), false, 1.5)
+	# Draw HP bar
+	var bar_w: float = 32.0
+	var bar_h: float = 4.0
+	var bar_y: float = -radius - 12.0
+	var hp_ratio: float = clampf(float(MatchState.invader_hp) / float(MatchState.INVADER_MAX_HP), 0.0, 1.0)
+	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w, bar_h), Color(0.1, 0.1, 0.1))
+	draw_rect(Rect2(-bar_w * 0.5, bar_y, bar_w * hp_ratio, bar_h), Color(0.9, 0.2, 0.2))
 	
-	# Draw name label with Level and HP numbers
+	# Draw name label with Level
 	var font := ThemeDB.fallback_font
 	var font_size := 11
-	var title_text := "%s Lv.%d (%d/%d)" % [display_name, invader_level, MatchState.invader_hp, MatchState.get_invader_max_hp()]
-	draw_string(font, Vector2(-60, -radius - 20), title_text, HORIZONTAL_ALIGNMENT_CENTER, 120, font_size, Color(1.0, 0.45, 0.45))
+	var title_text := "%s (Lv.%d)" % [display_name, invader_level]
+	draw_string(font, Vector2(-40, -radius - 16), title_text, HORIZONTAL_ALIGNMENT_CENTER, 80, font_size, Color(1.0, 0.4, 0.4))
 

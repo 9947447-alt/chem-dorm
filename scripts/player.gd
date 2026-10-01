@@ -12,8 +12,6 @@ func _process(delta: float) -> void:
 		_handle_input()
 
 func _handle_input() -> void:
-	if MatchState.is_in_freeze():
-		return
 	var dir := Vector2i.ZERO
 	if Input.is_action_pressed("ui_left") or Input.is_key_pressed(KEY_A):
 		dir = Vector2i.LEFT

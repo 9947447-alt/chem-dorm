@@ -54,7 +54,7 @@ anchors_preset = 12
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_top = -40.0
+offset_top = -50.0
 grow_horizontal = 2
 grow_vertical = 0
 
@@ -70,11 +70,49 @@ layout_mode = 2
 theme_override_constants/separation = 10
 alignment = 1
 
-[node name="HintLabel" type="Label" parent="BottomBar/Margin/HBox"]
+[node name="BtnUpgradeDoor" type="Button" parent="BottomBar/Margin/HBox"]
 layout_mode = 2
-size_flags_horizontal = 3
-text = "WASD 移动，左键选格开菜单，站起步格占房"
-horizontal_alignment = 1
+text = "[1] 升级舱门"
+
+[node name="BtnBuildTurret" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[2] 硅酸炮台 ($100)"
+
+[node name="BtnBuildIronMine" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[3] 铁矿 ($60)"
+
+[node name="BtnBuildChemPlant" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[4] 化工厂 ($200)"
+
+[node name="BtnBuildCatalytic" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[5] 催化柱 ($800)"
+
+[node name="BtnBuildFocus" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[6] 聚焦镜 ($600)"
+
+[node name="BtnBuildArm" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[7] 机械臂 ($1000)"
+
+[node name="BtnBuildRegulator" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[8] 稳压堆 ($2000)"
+
+[node name="BtnUpgradeTurret" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[9] 升级炮台"
+
+[node name="BtnToggleBranch" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[0] 分支: A线 (次氯)"
+
+[node name="SelectedLabel" type="Label" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "当前选择: 硅酸炮台"
 
 [node name="OutcomeLabel" type="Label" parent="."]
 anchors_preset = 8
@@ -91,3 +129,4 @@ grow_vertical = 2
 theme_override_font_sizes/font_size = 36
 horizontal_alignment = 1
 vertical_alignment = 1
+

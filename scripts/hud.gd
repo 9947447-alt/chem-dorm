@@ -1,7 +1,8 @@
 extends CanvasLayer
 
-signal cell_menu_item_chosen(index: int)
-signal cell_menu_closed
+signal build_selection_changed(item_id: String)
+signal upgrade_door_requested
+signal upgrade_turret_requested
 
 @onready var label_countdown: Label = $TopBar/Margin/HBox/CountdownLabel
 @onready var label_money: Label = $TopBar/Margin/HBox/MoneyLabel
@@ -10,10 +11,26 @@ signal cell_menu_closed
 @onready var label_invader_hp: Label = $TopBar/Margin/HBox/InvaderHpLabel
 @onready var label_room: Label = $TopBar/Margin/HBox/RoomLabel
 @onready var label_outcome: Label = $OutcomeLabel
-@onready var label_hint: Label = $BottomBar/Margin/HBox/HintLabel
 
-var cell_popup: PopupMenu
-var _ignore_popup_hide: bool = false
+@onready var btn_upgrade_door: Button = $BottomBar/Margin/HBox/BtnUpgradeDoor
+@onready var btn_build_turret: Button = $BottomBar/Margin/HBox/BtnBuildTurret
+@onready var btn_build_iron_mine: Button = $BottomBar/Margin/HBox/BtnBuildIronMine
+@onready var btn_build_chem_plant: Button = $BottomBar/Margin/HBox/BtnBuildChemPlant
+@onready var btn_build_catalytic: Button = $BottomBar/Margin/HBox/BtnBuildCatalytic
+@onready var btn_build_focus: Button = $BottomBar/Margin/HBox/BtnBuildFocus
+@onready var btn_build_arm: Button = $BottomBar/Margin/HBox/BtnBuildArm
+@onready var btn_build_regulator: Button = $BottomBar/Margin/HBox/BtnBuildRegulator
+@onready var btn_upgrade_turret: Button = $BottomBar/Margin/HBox/BtnUpgradeTurret
+@onready var btn_toggle_branch: Button = $BottomBar/Margin/HBox/BtnToggleBranch
+@onready var label_selected: Label = $BottomBar/Margin/HBox/SelectedLabel
+
+const MINE_IDS: Array[String] = [
+	"iron_mine", "tungsten_mine", "molybdenum_mine",
+	"sulfur_mine", "antimony_mine", "gold_mine", "uranium_mine"
+]
+var current_mine_idx: int = 0
+var selected_branch_line: String = "line_a"
+var current_selection: String = "turret"
 
 func _ready() -> void:
 	MatchState.countdown_tick.connect(_on_countdown_tick)
@@ -27,50 +44,83 @@ func _ready() -> void:
 	MatchState.invader_level_changed.connect(_on_invader_level_changed)
 	MatchState.game_over.connect(_on_game_over)
 
-	cell_popup = PopupMenu.new()
-	cell_popup.name = "CellPopup"
-	add_child(cell_popup)
-	cell_popup.id_pressed.connect(_on_cell_popup_id_pressed)
-	cell_popup.popup_hide.connect(_on_cell_popup_hide)
+	btn_upgrade_door.pressed.connect(_on_btn_upgrade_door_pressed)
+	btn_build_turret.pressed.connect(func(): _select_build("turret", "硅酸炮台"))
+	btn_build_iron_mine.pressed.connect(_on_btn_cycle_mine_pressed)
+	btn_build_chem_plant.pressed.connect(func(): _select_build("chem_plant", "化工厂"))
+	btn_build_catalytic.pressed.connect(func(): _select_build("catalytic_column", "催化柱"))
+	btn_build_focus.pressed.connect(func(): _select_build("focus_lens", "聚焦镜"))
+	btn_build_arm.pressed.connect(func(): _select_build("robotic_arm", "机械臂"))
+	btn_build_regulator.pressed.connect(func(): _select_build("regulator_stack", "稳压堆"))
+	btn_upgrade_turret.pressed.connect(_on_btn_upgrade_turret_pressed)
+	btn_toggle_branch.pressed.connect(_on_btn_toggle_branch_pressed)
 
-	label_hint.text = "WASD 移动，左键选格开菜单，站起步格占房"
 	_update_hud_display()
 
-func show_cell_menu(items: Array, screen_pos: Vector2) -> void:
-	if cell_popup == null:
-		return
-	_ignore_popup_hide = true
-	cell_popup.hide()
-	_ignore_popup_hide = false
-	cell_popup.clear()
-	for i in items.size():
-		var it: Dictionary = items[i]
-		var text: String = str(it.get("label", ""))
-		if str(it.get("action", "")) == "title" or str(it.get("id", "")) == "cell_title":
-			cell_popup.add_separator(text)
-			continue
-		if not it.get("enabled", false):
-			var reason: String = str(it.get("reason", ""))
-			if reason != "":
-				text = "%s（%s）" % [text, reason]
-		cell_popup.add_item(text, i)
-		cell_popup.set_item_disabled(i, not it.get("enabled", false))
-	cell_popup.position = Vector2i(int(screen_pos.x), int(screen_pos.y))
-	cell_popup.popup()
+func _get_mine(idx: int) -> Dictionary:
+	var id: String = MINE_IDS[idx]
+	var item: Dictionary = MatchState.BUILD_CATALOG[id]
+	return {
+		"id": id,
+		"name": item.get("name", id),
+		"cost": int(item.get("cost_money", 0))
+	}
 
-func hide_cell_menu() -> void:
-	if cell_popup != null and cell_popup.visible:
-		_ignore_popup_hide = true
-		cell_popup.hide()
-		_ignore_popup_hide = false
+func _on_btn_cycle_mine_pressed() -> void:
+	if current_selection == MINE_IDS[current_mine_idx]:
+		current_mine_idx = (current_mine_idx + 1) % MINE_IDS.size()
+	var mine: Dictionary = _get_mine(current_mine_idx)
+	btn_build_iron_mine.text = "[3] %s ($%d)" % [mine["name"], mine["cost"]]
+	_select_build(mine["id"], "%s ($%d)" % [mine["name"], mine["cost"]])
 
-func _on_cell_popup_id_pressed(id: int) -> void:
-	cell_menu_item_chosen.emit(id)
+func _on_btn_toggle_branch_pressed() -> void:
+	if selected_branch_line == "line_a":
+		selected_branch_line = "line_b"
+		btn_toggle_branch.text = "[0] 分支: B线 (盐酸)"
+	else:
+		selected_branch_line = "line_a"
+		btn_toggle_branch.text = "[0] 分支: A线 (次氯)"
 
-func _on_cell_popup_hide() -> void:
-	if _ignore_popup_hide:
-		return
-	cell_menu_closed.emit()
+func _unhandled_key_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		match event.keycode:
+			KEY_0:
+				_on_btn_toggle_branch_pressed()
+			KEY_1:
+				_on_btn_upgrade_door_pressed()
+			KEY_2:
+				_select_build("turret", "硅酸炮台")
+			KEY_3:
+				_on_btn_cycle_mine_pressed()
+			KEY_4:
+				_select_build("chem_plant", "化工厂")
+			KEY_5:
+				_select_build("catalytic_column", "催化柱")
+			KEY_6:
+				_select_build("focus_lens", "聚焦镜")
+			KEY_7:
+				_select_build("robotic_arm", "机械臂")
+			KEY_8:
+				_select_build("regulator_stack", "稳压堆")
+			KEY_9:
+				_on_btn_upgrade_turret_pressed()
+
+func _select_build(item_id: String, item_name: String) -> void:
+	current_selection = item_id
+	label_selected.text = "当前选择: %s" % item_name
+	build_selection_changed.emit(item_id)
+
+func _on_btn_upgrade_door_pressed() -> void:
+	if upgrade_door_requested.get_connections().size() > 0:
+		upgrade_door_requested.emit()
+	else:
+		var r_id: String = MatchState.get_player_owned_room_id()
+		if r_id != "":
+			MatchState.upgrade_door(r_id, "player")
+			_update_door_hp_display()
+
+func _on_btn_upgrade_turret_pressed() -> void:
+	upgrade_turret_requested.emit()
 
 func _update_hud_display() -> void:
 	_update_money_label(MatchState.money)
@@ -78,7 +128,7 @@ func _update_hud_display() -> void:
 	_update_countdown_label(MatchState.countdown_remaining)
 	_update_room_label(MatchState.player_room_id)
 	_update_door_hp_display()
-	_update_invader_hp_display(MatchState.invader_hp, MatchState.get_invader_max_hp())
+	_update_invader_hp_display(MatchState.invader_hp, MatchState.INVADER_MAX_HP)
 	_update_outcome_display()
 
 func _on_money_changed(amount: int) -> void:
@@ -98,10 +148,7 @@ func _on_countdown_tick(remaining: float) -> void:
 
 func _update_countdown_label(remaining: float) -> void:
 	if MatchState.current_phase == MatchState.Phase.COUNTDOWN:
-		if MatchState.startup_freeze > 0.0:
-			label_countdown.text = "准备阶段: %.1fs" % MatchState.startup_freeze
-		else:
-			label_countdown.text = "倒计时: %.1fs" % remaining
+		label_countdown.text = "倒计时: %.1fs" % remaining
 	else:
 		label_countdown.text = "倒计时: 0.0s [敌人已进入走廊]"
 
@@ -144,7 +191,7 @@ func _on_invader_hp_changed(hp: int, max_hp: int) -> void:
 	_update_invader_hp_display(hp, max_hp)
 
 func _on_invader_level_changed(_level: int) -> void:
-	_update_invader_hp_display(MatchState.invader_hp, MatchState.get_invader_max_hp())
+	_update_invader_hp_display(MatchState.invader_hp, MatchState.INVADER_MAX_HP)
 
 func _update_invader_hp_display(hp: int, max_hp: int) -> void:
 	var char_title: String = "入侵者"
@@ -165,10 +212,10 @@ func _on_game_over(_result: int) -> void:
 func _update_outcome_display() -> void:
 	match MatchState.game_result:
 		MatchState.GameResult.VICTORY:
-			label_outcome.text = "胜利！敌人已被炮台消灭\n[ 按 R 键重新开始 ]"
+			label_outcome.text = "胜利！敌人已被炮台消灭"
 			label_outcome.modulate = Color(0.2, 1.0, 0.3)
 		MatchState.GameResult.DEFEAT:
-			label_outcome.text = "失败！起步矿被摧毁\n[ 按 R 键重新开始 ]"
+			label_outcome.text = "失败！起步矿被摧毁"
 			label_outcome.modulate = Color(1.0, 0.2, 0.2)
 		_:
 			label_outcome.text = ""

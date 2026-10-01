@@ -16,8 +16,6 @@ var room_id: String = ""
 var turret_range: float = 4.0
 var fire_interval: float = 0.8
 var turret_damage: int = 25
-var total_cost_money: int = 100
-var total_cost_feedstock: int = 0
 
 # 高氯酸 (Perchloric) 连发硬直状态
 var burst_count: int = 0
@@ -66,10 +64,6 @@ func _process(delta: float) -> void:
 	if MatchState.game_result != MatchState.GameResult.NONE:
 		return
 
-	if MatchState.is_room_fallen(room_id):
-		fire_timer = 0.0
-		return
-
 	if silence_timer > 0.0:
 		silence_timer = maxf(0.0, silence_timer - delta)
 		return # 被沉默，无法攻击
@@ -83,10 +77,16 @@ func _process(delta: float) -> void:
 	if not target_invader.is_alive() or not target_invader.visible:
 		return
 
-	var eff_range: float = get_effective_range()
+	var eff_range: float = maxf(1.0, turret_range - range_reduction)
+	if MatchState.has_adjacent_high_tech(grid_cell, "focus_lens"):
+		eff_range += 1.0
 	var range_px: float = eff_range * float(GridMapManager.TILE_SIZE)
 	var dist: float = global_position.distance_to(target_invader.global_position)
-	var eff_interval: float = get_effective_interval()
+	var eff_interval: float = fire_interval * (1.35 if fog_slow_timer > 0.0 else 1.0)
+	if MatchState.has_adjacent_high_tech(grid_cell, "catalytic_column"):
+		eff_interval *= 0.75
+	if MatchState.has_regulator_stack(room_id):
+		eff_interval *= 0.85
 
 	if dist <= range_px:
 		if not _can_shoot_target(target_invader):
@@ -118,7 +118,40 @@ func _can_shoot_target(invader: InvaderActor) -> bool:
 		return false
 	if not invader.is_alive() or not invader.visible:
 		return false
-	return true
+
+	# 魔酸（氟锑酸）具有超强穿透性，能隔门穿透直击走廊内任意目标
+	if substance == "fluoroantimonic":
+		return true
+
+	if grid_manager == null:
+		return true
+
+	var my_room: RoomData = grid_manager.get_room_by_id(room_id)
+	if my_room == null:
+		my_room = grid_manager.get_room_at_cell(grid_cell)
+	if my_room == null:
+		return true
+
+	var target_cell: Vector2i = invader.current_cell
+
+	# 目标在同房间内部，内部视野完全通畅
+	if my_room.is_cell_interior(target_cell):
+		return true
+
+	# 目标在攻击本房间舱门（正处于门外格或门口格）
+	if target_cell == my_room.door_exterior_cell or target_cell == my_room.door_cell:
+		return true
+
+	# 目标在外部其他格子（走廊深处、其他房间）：
+	# 普通炮台受防爆合金门阻隔，只有在门已被打破开启时才能透过门口射向走廊
+	if not MatchState.is_door_broken(my_room.room_id):
+		return false
+
+	# 门已破，且目标在走廊
+	if grid_manager.is_corridor_cell(target_cell):
+		return true
+
+	return false
 
 func _fire_at_invader() -> void:
 	if target_invader == null or not is_instance_valid(target_invader):
@@ -153,8 +186,6 @@ func _fire_at_invader() -> void:
 			final_dmg = int(round(float(final_dmg) * 1.25))
 
 	target_invader.take_damage(final_dmg)
-	if grid_manager != null:
-		grid_manager.spawn_combat_popup(target_invader.current_cell, "-%d" % final_dmg, Color(1.0, 0.25, 0.25))
 	laser_end_point = target_invader.global_position - global_position
 	laser_visible_timer = 0.1
 	queue_redraw()
@@ -229,8 +260,5 @@ func get_effective_interval() -> float:
 		eff *= 0.75
 	if MatchState.has_regulator_stack(room_id):
 		eff *= 0.85
-	var pa_count: int = MatchState.count_building_type_in_room(room_id, "particle_accelerator")
-	if pa_count > 0:
-		eff *= 1.0 / (1.0 + 0.5 * float(pa_count)) # 每个粒子加速器使攻速提升 50%
 	return eff
 
