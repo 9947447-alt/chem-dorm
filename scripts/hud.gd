@@ -67,30 +67,30 @@ func _get_mine(idx: int) -> Dictionary:
 	}
 
 func update_build_buttons() -> void:
-	var t_cost: int = int(MatchState.BUILD_CATALOG.get("silicic_turret_1", {}).get("cost_money", 100))
+	var t_cost: int = int(MatchState.BUILD_CATALOG.get("silicic_turret_1", {}).get("cost_money", 0))
 	var t_name: String = str(MatchState.BUILD_CATALOG.get("silicic_turret_1", {}).get("name", "硅酸炮台 I"))
 	btn_build_turret.text = "[2] %s ($%d)" % [t_name, t_cost]
 
 	var mine: Dictionary = _get_mine(current_mine_idx)
 	btn_build_iron_mine.text = "[3] %s ($%d)" % [mine["name"], mine["cost"]]
 
-	var cp_cost: int = int(MatchState.BUILD_CATALOG.get("chem_plant", {}).get("cost_money", 200))
+	var cp_cost: int = int(MatchState.BUILD_CATALOG.get("chem_plant", {}).get("cost_money", 0))
 	var cp_name: String = str(MatchState.BUILD_CATALOG.get("chem_plant", {}).get("name", "化工厂"))
 	btn_build_chem_plant.text = "[4] %s ($%d)" % [cp_name, cp_cost]
 
-	var cat_cost: int = int(MatchState.BUILD_CATALOG.get("catalytic_column", {}).get("cost_money", 800))
+	var cat_cost: int = int(MatchState.BUILD_CATALOG.get("catalytic_column", {}).get("cost_money", 0))
 	var cat_name: String = str(MatchState.BUILD_CATALOG.get("catalytic_column", {}).get("name", "催化柱"))
 	btn_build_catalytic.text = "[5] %s ($%d)" % [cat_name, cat_cost]
 
-	var foc_cost: int = int(MatchState.BUILD_CATALOG.get("focus_lens", {}).get("cost_money", 600))
+	var foc_cost: int = int(MatchState.BUILD_CATALOG.get("focus_lens", {}).get("cost_money", 0))
 	var foc_name: String = str(MatchState.BUILD_CATALOG.get("focus_lens", {}).get("name", "聚焦镜"))
 	btn_build_focus.text = "[6] %s ($%d)" % [foc_name, foc_cost]
 
-	var arm_cost: int = int(MatchState.BUILD_CATALOG.get("robotic_arm", {}).get("cost_money", 1000))
+	var arm_cost: int = int(MatchState.BUILD_CATALOG.get("robotic_arm", {}).get("cost_money", 0))
 	var arm_name: String = str(MatchState.BUILD_CATALOG.get("robotic_arm", {}).get("name", "机械臂"))
 	btn_build_arm.text = "[7] %s ($%d)" % [arm_name, arm_cost]
 
-	var reg_cost: int = int(MatchState.BUILD_CATALOG.get("regulator_stack", {}).get("cost_money", 2000))
+	var reg_cost: int = int(MatchState.BUILD_CATALOG.get("regulator_stack", {}).get("cost_money", 0))
 	var reg_name: String = str(MatchState.BUILD_CATALOG.get("regulator_stack", {}).get("name", "稳压堆"))
 	btn_build_regulator.text = "[8] %s ($%d)" % [reg_name, reg_cost]
 

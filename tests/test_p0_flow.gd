@@ -2681,6 +2681,36 @@ func _test_cross_room_build_blocking_and_price_source_and_starter_name() -> bool
 	MatchState.BUILD_CATALOG["chem_plant"]["cost_money"] = orig_cp_cost
 	hud.update_build_buttons()
 
+	# (e) 六个非矿产按钮全部改价，断言按钮文本跟目录走，缺省兜底不会钉死旧价
+	var building_cases: Array[Dictionary] = [
+		{"id": "silicic_turret_1", "button": hud.btn_build_turret, "cost": 111},
+		{"id": "chem_plant", "button": hud.btn_build_chem_plant, "cost": 222},
+		{"id": "catalytic_column", "button": hud.btn_build_catalytic, "cost": 444},
+		{"id": "focus_lens", "button": hud.btn_build_focus, "cost": 555},
+		{"id": "robotic_arm", "button": hud.btn_build_arm, "cost": 777},
+		{"id": "regulator_stack", "button": hud.btn_build_regulator, "cost": 999},
+	]
+	var orig_building_costs: Dictionary = {}
+	for entry in building_cases:
+		var item_id: String = str(entry["id"])
+		orig_building_costs[item_id] = int(MatchState.BUILD_CATALOG[item_id]["cost_money"])
+		MatchState.BUILD_CATALOG[item_id]["cost_money"] = int(entry["cost"])
+	hud.update_build_buttons()
+	for entry in building_cases:
+		var item_id: String = str(entry["id"])
+		var expected_cost: int = int(entry["cost"])
+		var button: Button = entry["button"]
+		var needle: String = "$%d" % expected_cost
+		if not button.text.contains(needle):
+			printerr("FAILED: Dynamic price %s for %s not reflected in HUD: %s" % [needle, item_id, button.text])
+			for restore_id in orig_building_costs.keys():
+				MatchState.BUILD_CATALOG[restore_id]["cost_money"] = orig_building_costs[restore_id]
+			main_scene.queue_free()
+			return false
+	for restore_id in orig_building_costs.keys():
+		MatchState.BUILD_CATALOG[restore_id]["cost_money"] = orig_building_costs[restore_id]
+	hud.update_build_buttons()
+
 	# (d) 验证 DEFEAT 结果中文案正确展示「基底矿」且不包含裸「starter」
 	MatchState.claim_room("room_101", "player")
 	MatchState.damage_starter("room_101", MatchState.STARTER_MAX_HP)
