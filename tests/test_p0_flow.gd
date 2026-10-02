@@ -26,6 +26,8 @@ func _ready() -> void:
 	success = success and _test_victory_and_defeat_conditions()
 	success = success and _test_hatch_and_invader_balance()
 	success = success and _test_cross_room_build_blocking_and_price_source_and_starter_name()
+	success = success and _test_ally_logs_silenced_and_player_logs_preserved()
+	success = success and _test_invader_dynamic_retargeting_after_healing()
 
 	if success:
 		print("========================================")
@@ -2844,4 +2846,265 @@ func _test_cross_room_build_blocking_and_price_source_and_starter_name() -> bool
 	print("  [Check 3] 跨房拦截已验证，走廊格、空房格、盟友房格及未占房建造全数拦截且不扣款。")
 	grid.queue_free()
 	print("PASS: Starter naming, dynamic catalog price source of truth, and strict cross-room placement verified.")
+	return true
+
+func _test_ally_logs_silenced_and_player_logs_preserved() -> bool:
+	print("\n[TEST Quiet Logs] Testing Ally AI build logs quiet by default, player logs preserved, and VERBOSE_AI_LOGS...")
+	MatchState.reset_match()
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	for r in grid.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name, r.interior_rect)
+
+	MatchState.claim_room("room_101", "player")
+	MatchState.claim_room("room_102", "ally_1")
+
+	MatchState.set_actor_money("player", 50000)
+	MatchState.set_actor_money("ally_1", 50000)
+
+	# 1. 验证默认开关 VERBOSE_AI_LOGS 为 false
+	if MatchState.VERBOSE_AI_LOGS != false:
+		printerr("FAILED: VERBOSE_AI_LOGS must be false by default")
+		grid.queue_free()
+		return false
+
+	var r101: RoomData = grid.get_room_by_id("room_101")
+	var r102: RoomData = grid.get_room_by_id("room_102")
+
+	var ally_empty_cells: Array[Vector2i] = []
+	for c in r102.get_interior_cells():
+		if not r102.starter_cells.has(c) and c != r102.door_cell:
+			ally_empty_cells.append(c)
+
+	var initial_log_count: int = MatchState.build_log_count
+	if initial_log_count != 0:
+		printerr("FAILED: initial build_log_count should be 0")
+		grid.queue_free()
+		return false
+
+	# 2. 模拟盟友批量铺矿 5 座
+	for i in range(5):
+		var target_c: Vector2i = ally_empty_cells.pop_front()
+		var res: bool = MatchState.buy_and_place_building("room_102", "iron_mine", "ally_1", target_c)
+		if not res:
+			printerr("FAILED: Ally iron mine placement failed at ", target_c)
+			grid.queue_free()
+			return false
+
+	# 断言：盟友批量建造没有触发任何 print 日志
+	if MatchState.build_log_count != 0:
+		printerr("FAILED: Ally batch building must NOT produce print logs! build_log_count: ", MatchState.build_log_count)
+		grid.queue_free()
+		return false
+	if MatchState.last_build_log != "":
+		printerr("FAILED: last_build_log should be empty for ally actions, got: ", MatchState.last_build_log)
+		grid.queue_free()
+		return false
+	print("  [Check 1] 盟友批量铺矿日志已静默，未产生冗余终端输出。")
+
+	# 3. 盟友升级化工厂与舱门依然静默
+	var ally_plant_cell: Vector2i = ally_empty_cells.pop_front()
+	MatchState.buy_and_place_building("room_102", "chem_plant", "ally_1", ally_plant_cell)
+	MatchState.upgrade_chem_plant("room_102", "ally_1", ally_plant_cell)
+	MatchState.upgrade_door("room_102", "ally_1")
+
+	if MatchState.build_log_count != 0:
+		printerr("FAILED: Ally upgrade actions must also remain quiet! build_log_count: ", MatchState.build_log_count)
+		grid.queue_free()
+		return false
+	print("  [Check 2] 盟友化工厂与舱门日常升级日志已静默。")
+
+	# 4. 玩家操作必须继续产生日志
+	var player_empty_cells: Array[Vector2i] = []
+	for c in r101.get_interior_cells():
+		if not r101.starter_cells.has(c) and c != r101.door_cell:
+			player_empty_cells.append(c)
+
+	var player_cell: Vector2i = player_empty_cells.pop_front()
+	var p_res: bool = MatchState.buy_and_place_building("room_101", "iron_mine", "player", player_cell)
+	if not p_res:
+		printerr("FAILED: Player iron mine placement failed")
+		grid.queue_free()
+		return false
+	if MatchState.build_log_count != 1:
+		printerr("FAILED: Player building must produce log! build_log_count: ", MatchState.build_log_count)
+		grid.queue_free()
+		return false
+	if not MatchState.last_build_log.contains("建造成功") or not MatchState.last_build_log.contains("铁矿"):
+		printerr("FAILED: Player build log content mismatch: ", MatchState.last_build_log)
+		grid.queue_free()
+		return false
+
+	var d_up: bool = MatchState.upgrade_door("room_101", "player")
+	if not d_up:
+		printerr("FAILED: Player door upgrade failed")
+		grid.queue_free()
+		return false
+	if MatchState.build_log_count != 2:
+		printerr("FAILED: Player door upgrade must produce log! build_log_count: ", MatchState.build_log_count)
+		grid.queue_free()
+		return false
+	if not MatchState.last_build_log.contains("舱门升级成功"):
+		printerr("FAILED: Player door upgrade log mismatch: ", MatchState.last_build_log)
+		grid.queue_free()
+		return false
+	print("  [Check 3] 人类玩家建造与升门日志完好输出，操作清晰可见。")
+
+	# 5. 全局调试开关 VERBOSE_AI_LOGS 开启时恢复输出
+	MatchState.VERBOSE_AI_LOGS = true
+	var ally_debug_cell: Vector2i = ally_empty_cells.pop_front()
+	MatchState.buy_and_place_building("room_102", "iron_mine", "ally_1", ally_debug_cell)
+	if MatchState.build_log_count != 3:
+		printerr("FAILED: When VERBOSE_AI_LOGS is true, ally logs should be logged! count: ", MatchState.build_log_count)
+		MatchState.VERBOSE_AI_LOGS = false
+		grid.queue_free()
+		return false
+	MatchState.VERBOSE_AI_LOGS = false
+
+	print("PASS: Ally build logs silenced by default, player logs preserved, and VERBOSE_AI_LOGS verified.")
+	grid.queue_free()
+	return true
+
+func _test_invader_dynamic_retargeting_after_healing() -> bool:
+	print("\n[TEST Dynamic Targeting] Testing Invader Dynamic Retargeting & Breach Eviction...")
+	MatchState.reset_match()
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	for r in grid.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name, r.interior_rect)
+
+	# 玩家占领 101，盟友占领 102~106
+	MatchState.claim_room("room_101", "player")
+	MatchState.claim_room("room_102", "ally_1")
+	MatchState.claim_room("room_103", "ally_2")
+	MatchState.claim_room("room_104", "ally_3")
+	MatchState.claim_room("room_105", "ally_4")
+	MatchState.claim_room("room_106", "ally_5")
+
+	var invader := InvaderActor.new()
+	add_child(invader)
+	invader.init_actor("invader", "入侵者", Color.RED, grid.invader_spawn_cell, grid)
+
+	# 1. 开局入场，初始目标为玩家房间 room_101
+	invader.spawn_invader()
+	if invader.target_room_id != "room_101":
+		printerr("FAILED: Initial spawn target should be room_101, got: ", invader.target_room_id)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if invader.target_exterior_cell != Vector2i(6, 13):
+		printerr("FAILED: Initial target cell mismatch: ", invader.target_exterior_cell)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 2. 模拟侵入者在 room_101 被打至 <= 35% 触发撤退
+	MatchState.invader_hp = int(float(MatchState.INVADER_MAX_HP) * 0.3)
+	invader._retreat_to_heal_pad()
+	if invader.invader_state != InvaderActor.InvaderState.MOVING_TO_HEAL_PAD:
+		printerr("FAILED: Invader did not enter MOVING_TO_HEAL_PAD on <= 35% HP")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 模拟到达回血点
+	invader.current_cell = Vector2i(39, 13)
+	invader.invader_state = InvaderActor.InvaderState.HEALING_AT_PAD
+
+	# 3. 模拟在回血点恢复至 >= 90% 重返战场
+	MatchState.invader_hp = int(float(MatchState.INVADER_MAX_HP) * 0.95)
+	invader._process(0.1) # 触发 pick_target_after_healing()
+
+	# 断言：目标不再是 room_101，也不是写死的固定坐标 (29, 13)，而是动态计算的下一个存活房 room_102
+	if invader.target_room_id != "room_102":
+		printerr("FAILED: After healing, invader should retarget to room_102 to avoid deadlock! Got: ", invader.target_room_id)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if invader.target_exterior_cell != Vector2i(18, 13):
+		printerr("FAILED: Target cell should be room_102 exterior (18, 13), got: ", invader.target_exterior_cell)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if invader.invader_state != InvaderActor.InvaderState.APPROACHING_DOOR:
+		printerr("FAILED: Invader should be APPROACHING_DOOR after retargeting")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	print("  [Check 1] 侵入者回血后成功动态重定向至存活房间 room_102，打破单点死锁。")
+
+	# 4. 模拟已攻破房间自动剔除：攻破 room_103 的门
+	MatchState.damage_door("room_103", 99999)
+	if not MatchState.is_door_broken("room_103"):
+		printerr("FAILED: room_103 door should be broken")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+
+	# 侵入者在 room_102 受挫撤退至回血点
+	invader.target_room_id = "room_102"
+	MatchState.invader_hp = int(float(MatchState.INVADER_MAX_HP) * 0.3)
+	invader._retreat_to_heal_pad()
+	invader.current_cell = Vector2i(39, 13)
+	invader.invader_state = InvaderActor.InvaderState.HEALING_AT_PAD
+
+	# 回血满后再次索敌
+	MatchState.invader_hp = int(float(MatchState.INVADER_MAX_HP) * 0.95)
+	invader._process(0.1)
+
+	# 断言：已攻破的 room_103 被自动剔除，侵入者跳过 room_103，动态选择下一个存活房 room_104！
+	if invader.target_room_id == "room_103":
+		printerr("FAILED: Broken room_103 must be evicted, but invader selected it!")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if invader.target_room_id != "room_104":
+		printerr("FAILED: Invader should advance to room_104 after room_103 breach eviction, got: ", invader.target_room_id)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if invader.target_exterior_cell != Vector2i(6, 14):
+		printerr("FAILED: Target cell should be room_104 door exterior (6, 14), got: ", invader.target_exterior_cell)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	print("  [Check 2] 攻破房间 room_103 自动剔除，侵入者动态跳选下一个存活房 room_104。")
+
+	# 5. 再次验证：攻破 room_104 后，自动顺延到 room_105
+	MatchState.damage_door("room_104", 99999)
+	invader.target_room_id = "room_104"
+	var next_t: RoomData = invader.pick_target_after_healing()
+	if next_t == null or next_t.room_id != "room_105":
+		printerr("FAILED: Expected room_105 after room_104 breach, got: ", "" if next_t == null else next_t.room_id)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	if invader.target_exterior_cell != Vector2i(18, 14):
+		printerr("FAILED: Expected room_105 exterior (18, 14), got: ", invader.target_exterior_cell)
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	print("  [Check 3] 连续攻破链条自动剔除验证通过，动态目标顺延至 room_105。")
+
+	# 6. 验证门全破但基底矿存活的兜底逻辑
+	MatchState.damage_door("room_101", 99999)
+	MatchState.damage_door("room_102", 99999)
+	MatchState.damage_door("room_105", 99999)
+	MatchState.damage_door("room_106", 99999)
+	# 所有门全破，但起步矿活着
+	var fallback_target: RoomData = invader.pick_target_after_healing()
+	if fallback_target == null:
+		printerr("FAILED: Invader should still pick starter-alive room when all doors broken")
+		invader.queue_free()
+		grid.queue_free()
+		return false
+	print("  [Check 4] 全部舱门攻破场景下存活起步矿兜底索敌验证通过。")
+
+	invader.queue_free()
+	grid.queue_free()
+	print("PASS: Dynamic target selection, deadlock avoidance, and breach eviction fully verified.")
 	return true

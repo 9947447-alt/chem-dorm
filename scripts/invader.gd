@@ -17,6 +17,7 @@ var invader_state: InvaderState = InvaderState.WAITING_FOR_SPAWN
 var target_exterior_cell: Vector2i = Vector2i.ZERO
 var target_room_id: String = ""
 var attack_timer: float = 0.0
+var target_strategy: String = "round_robin" # "round_robin", "lowest_hp", "distance"
 
 # 敌人角色与等级经验体系
 var invader_character: String = "" # rock_corroder(蚀岩), mist_walker(雾徙), fire_quencher(遏火), oxygen_burster(暴氧)
@@ -129,6 +130,89 @@ func spawn_invader() -> void:
 	position = grid_manager.cell_to_world(current_cell)
 	_pick_target_and_move()
 
+func get_alive_rooms() -> Array[RoomData]:
+	var alive: Array[RoomData] = []
+	if grid_manager == null:
+		return alive
+	for r in grid_manager.get_all_rooms():
+		if not MatchState.is_door_broken(r.room_id) and MatchState.get_starter_hp(r.room_id) > 0:
+			alive.append(r)
+	if alive.is_empty():
+		for r in grid_manager.get_all_rooms():
+			if MatchState.get_starter_hp(r.room_id) > 0:
+				alive.append(r)
+	return alive
+
+func select_dynamic_target() -> RoomData:
+	if grid_manager == null:
+		return null
+	
+	var alive_rooms: Array[RoomData] = get_alive_rooms()
+	if alive_rooms.is_empty():
+		return null
+	
+	var chosen_room: RoomData = null
+	
+	match target_strategy:
+		"lowest_hp":
+			var lowest_hp: int = 99999999
+			for r in alive_rooms:
+				var hp: int = MatchState.get_door_hp(r.room_id)
+				if hp < lowest_hp:
+					lowest_hp = hp
+					chosen_room = r
+		"distance":
+			var min_dist: int = 999999
+			for r in alive_rooms:
+				var path := grid_manager.astar_corridor.get_id_path(current_cell, r.door_exterior_cell)
+				var d: int = path.size() if path.size() > 0 else 999999
+				if d < min_dist:
+					min_dist = d
+					chosen_room = r
+		_: # "round_robin"
+			var all_rooms: Array[RoomData] = grid_manager.get_all_rooms()
+			var cur_all_idx: int = -1
+			for i in range(all_rooms.size()):
+				if all_rooms[i].room_id == target_room_id:
+					cur_all_idx = i
+					break
+			
+			for step in range(1, all_rooms.size() + 1):
+				var check_idx: int = (cur_all_idx + step) % all_rooms.size()
+				var candidate: RoomData = all_rooms[check_idx]
+				if not MatchState.is_door_broken(candidate.room_id) and MatchState.get_starter_hp(candidate.room_id) > 0:
+					chosen_room = candidate
+					break
+			
+			if chosen_room == null and not alive_rooms.is_empty():
+				chosen_room = alive_rooms[0]
+	
+	if chosen_room == null and not alive_rooms.is_empty():
+		chosen_room = alive_rooms[0]
+	
+	return chosen_room
+
+func pick_target_after_healing() -> RoomData:
+	var target_room: RoomData = select_dynamic_target()
+	if target_room != null:
+		target_room_id = target_room.room_id
+		target_exterior_cell = target_room.door_exterior_cell
+		MatchState.invader_target_room_id = target_room_id
+		
+		if target_exterior_cell != Vector2i.ZERO:
+			var path: Array[Vector2i] = grid_manager.get_invader_path_to_cell(current_cell, target_exterior_cell)
+			if not path.is_empty():
+				invader_state = InvaderState.APPROACHING_DOOR
+				set_target_path(path)
+			else:
+				invader_state = InvaderState.STOPPED_AT_DOOR
+		else:
+			invader_state = InvaderState.STOPPED_AT_DOOR
+		print("Invader healed, dynamically retargeted to room %s at %s" % [target_room_id, target_exterior_cell])
+	else:
+		invader_state = InvaderState.IDLE
+	return target_room
+
 func _pick_target_and_move() -> void:
 	var player_room_id: String = MatchState.get_player_owned_room_id()
 	var target_room: RoomData = null
@@ -139,11 +223,24 @@ func _pick_target_and_move() -> void:
 		target_room_id = target_room.room_id
 		target_exterior_cell = target_room.door_exterior_cell
 	else:
-		target_exterior_cell = grid_manager.get_closest_door_exterior_to(current_cell)
-		for r in grid_manager.get_all_rooms():
-			if r.door_exterior_cell == target_exterior_cell:
-				target_room_id = r.room_id
-				break
+		var alive_rooms: Array[RoomData] = get_alive_rooms()
+		var min_dist: int = 999999
+		for r in alive_rooms:
+			var path := grid_manager.astar_corridor.get_id_path(current_cell, r.door_exterior_cell)
+			var d: int = path.size() if path.size() > 0 else 999999
+			if d < min_dist:
+				min_dist = d
+				target_room = r
+		
+		if target_room != null:
+			target_room_id = target_room.room_id
+			target_exterior_cell = target_room.door_exterior_cell
+		else:
+			target_exterior_cell = grid_manager.get_closest_door_exterior_to(current_cell)
+			for r in grid_manager.get_all_rooms():
+				if r.door_exterior_cell == target_exterior_cell:
+					target_room_id = r.room_id
+					break
 
 	MatchState.invader_target_room_id = target_room_id
 	
@@ -279,9 +376,9 @@ func _process_healing(delta: float) -> void:
 		queue_redraw()
 
 	if MatchState.invader_hp >= int(float(MatchState.INVADER_MAX_HP) * 0.9):
-		# 生命值恢复至安全线，重返战场
+		# 生命值恢复至安全线，动态索敌重返战场
 		heal_tick_timer = 0.0
-		_pick_target_and_move()
+		pick_target_after_healing()
 
 func _process_attacking_door(delta: float) -> void:
 	if target_room_id == "":

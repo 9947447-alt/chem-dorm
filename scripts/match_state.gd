@@ -272,10 +272,24 @@ var invader_level: int = 1
 var invader_xp: int = 0
 var invader_status_text: String = "" # 可选 HUD：胶滞 / 沸断
 
+# 日志输出过滤与调试开关（盟友 AI 建造/升级默认静默，仅玩家与全场大事件打印）
+var VERBOSE_AI_LOGS: bool = false
+var last_build_log: String = ""
+var build_log_count: int = 0
+
+func log_build_message(msg: String, is_player: bool) -> void:
+	if is_player or VERBOSE_AI_LOGS:
+		last_build_log = msg
+		build_log_count += 1
+		print(msg)
+
 func _ready() -> void:
 	reset_match()
 
 func reset_match(countdown_duration: float = 25.0) -> void:
+	last_build_log = ""
+	build_log_count = 0
+	current_phase = Phase.COUNTDOWN
 	current_phase = Phase.COUNTDOWN
 	countdown_remaining = countdown_duration
 	money = 0
@@ -597,9 +611,10 @@ func can_build(room_id: String, item_id: String, actor_id: String, cell: Vector2
 	return {"success": true, "reason": "", "effective_room_id": effective_room_id}
 
 func buy_and_place_building(room_id: String, item_id: String, actor_id: String, cell: Vector2i) -> bool:
+	var is_player: bool = (actor_id == "player")
 	var check: Dictionary = can_build(room_id, item_id, actor_id, cell)
 	if not check.get("success", false):
-		print("建造失败: ", check.get("reason", ""))
+		log_build_message("建造失败: %s" % check.get("reason", ""), is_player)
 		return false
 	
 	var target_room_id: String = check.get("effective_room_id", room_id)
@@ -632,7 +647,7 @@ func buy_and_place_building(room_id: String, item_id: String, actor_id: String, 
 	room_buildings[target_room_id].append(b_data)
 	cell_to_building[cell] = b_data
 	building_added.emit(target_room_id, b_data)
-	print("建造成功: 在 %s 建造 %s" % [cell, b_data.get("name", item.get("name", ""))])
+	log_build_message("建造成功: 在 %s 建造 %s" % [cell, b_data.get("name", item.get("name", ""))], is_player)
 	return true
 
 func get_chem_plant_income_for_level(level: int) -> int:
@@ -676,9 +691,10 @@ func can_upgrade_chem_plant(room_id: String, actor_id: String, cell: Vector2i = 
 	}
 
 func upgrade_chem_plant(room_id: String, actor_id: String, cell: Vector2i = Vector2i(-1, -1)) -> bool:
+	var is_player: bool = (actor_id == "player")
 	var check: Dictionary = can_upgrade_chem_plant(room_id, actor_id, cell)
 	if not check.get("success", false):
-		print("化工厂升级失败: ", check.get("reason", ""))
+		log_build_message("化工厂升级失败: %s" % check.get("reason", ""), is_player)
 		return false
 	var cost: int = int(check.get("cost_money", 0))
 	if not spend_actor_money(actor_id, cost):
@@ -688,7 +704,7 @@ func upgrade_chem_plant(room_id: String, actor_id: String, cell: Vector2i = Vect
 	plant["level"] = next_lvl
 	plant["income_feedstock"] = get_chem_plant_income_for_level(next_lvl)
 	plant["name"] = "化工厂 %s" % get_roman_numeral(next_lvl)
-	print("化工厂升级成功: %s" % [plant["name"]])
+	log_build_message("化工厂升级成功: %s" % [plant["name"]], is_player)
 	return true
 
 # --- 酸树体系与换线规则 ---
@@ -892,14 +908,15 @@ func can_upgrade_turret(turret: SilicicTurret, chosen_branch: String = "") -> Di
 	return up_info
 
 func upgrade_turret(turret: SilicicTurret, chosen_branch: String = "") -> bool:
-	var check: Dictionary = can_upgrade_turret(turret, chosen_branch)
-	if not check.get("success", false):
-		print("炮台升级失败: ", check.get("reason", ""))
-		return false
-
 	var owner: String = get_room_owner(turret.room_id)
 	if owner == "":
 		owner = "player"
+	var is_player: bool = (owner == "player")
+
+	var check: Dictionary = can_upgrade_turret(turret, chosen_branch)
+	if not check.get("success", false):
+		log_build_message("炮台升级失败: %s" % check.get("reason", ""), is_player)
+		return false
 
 	var cost_m: int = check.get("cost_money", 0)
 	var cost_f: int = check.get("cost_feedstock", 0)
@@ -914,7 +931,7 @@ func upgrade_turret(turret: SilicicTurret, chosen_branch: String = "") -> bool:
 	turret.rank = check.get("next_rank", turret.rank)
 	turret.branch_line = check.get("next_branch", turret.branch_line)
 	turret.apply_stats()
-	print("炮台升级成功: %s" % [get_turret_display_name(turret.substance, turret.rank)])
+	log_build_message("炮台升级成功: %s" % [get_turret_display_name(turret.substance, turret.rank)], is_player)
 	return true
 
 
@@ -1033,9 +1050,10 @@ func can_upgrade_door(room_id: String, actor_id: String = "player") -> Dictionar
 	}
 
 func upgrade_door(room_id: String, actor_id: String = "player") -> bool:
+	var is_player: bool = (actor_id == "player")
 	var check: Dictionary = can_upgrade_door(room_id, actor_id)
 	if not check.get("success", false):
-		print("舱门升级失败: ", check.get("reason", ""))
+		log_build_message("舱门升级失败: %s" % check.get("reason", ""), is_player)
 		return false
 
 	var cost: int = check.get("cost_money", 0)
@@ -1059,7 +1077,7 @@ func upgrade_door(room_id: String, actor_id: String = "player") -> bool:
 	door_hp[room_id] = min(new_max, old_hp + hp_delta)
 
 	door_hp_changed.emit(room_id, door_hp[room_id], new_max)
-	print("舱门升级成功: %s" % [get_door_display_name(room_id)])
+	log_build_message("舱门升级成功: %s" % [get_door_display_name(room_id)], is_player)
 	return true
 
 func get_door_hp(room_id: String) -> int:
@@ -1089,7 +1107,10 @@ func damage_door(room_id: String, damage: int, ignore_armor: bool = false) -> in
 	var hp: int = max(0, door_hp[room_id] - eff_dmg)
 	door_hp[room_id] = hp
 	if hp <= 0:
+		var was_broken: bool = door_broken.get(room_id, false)
 		door_broken[room_id] = true
+		if not was_broken:
+			print("舱门告破！%s 舱门已被击破！" % [get_room_display_name(room_id)])
 	door_hp_changed.emit(room_id, hp, max_h)
 	return hp
 
