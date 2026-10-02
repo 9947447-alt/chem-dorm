@@ -1,0 +1,55 @@
+对照 DESIGN.md 与 V0 Acceptance 审当前 HEAD：先读规范与验收条目，再跑 Godot 导入与测试，不以实现者说明为准。先读 DESIGN、V0 验收与审计提示，同时核对 HEAD 与 Git 状态。V0 Acceptance 还不在仓库正文里，接着查提交历史、记忆和源码里的验收条目。接下来对照 DESIGN 与必须成立的 8 条验收，读剩余实现并跑 Godot 导入/测试。导入和测试现在开跑；同时核对 V0 实现会话里的验收原文。当前 HEAD 的 V0 八条必须项全部 **PASS**：对照的是 `DESIGN.md` 切片约束、源码路径和 headless 实跑，不是实现者说明。未改代码，未 commit，未 push，未 merge。
+
+**HEAD:** `e3ec867a9a4fe2a1235906e5e1d3dae4363d206f`
+
+| 命令 | 结果 |
+| --- | --- |
+| `godot --version` | `4.7.2.stable.official.ed1daf0bf` |
+| `godot --headless --path . --import --quit` | 退出码 **0** |
+| `godot --headless --path . tests/test_runner.tscn` | 退出码 **0**，`ALL chem-dorm V0 ACCEPTANCE TESTS PASSED!` |
+
+工作树：已跟踪文件干净；仅 `audit/` 未跟踪（审计提示，非产品代码）。
+
+---
+
+### 必须成立
+
+1. **产钱 — PASS**  
+   已占房且起步矿 HP > 0 时，autoload `MatchState._process` 按间隔给玩家加钱；矿毁则该房不再入账。  
+   `scripts/match_state.gd:200-209`、`136-138`；HUD `scripts/hud.gd:32-33`。实跑 TEST 8 PASS。
+
+2. **只能在已占房空格造硅酸 I — PASS**  
+   左键建造唯一入口：未占房 / 非己房内部 / 起步矿 / 门 / 已有建筑 / 钱不足 → 拒绝；仅己房内部空地板扣费落地。  
+   `scripts/main.gd:76-118`、`scripts/grid_map_manager.gd:266-272`。无建造菜单。实跑 TEST 9 PASS。
+
+3. **门口拆门 — PASS**  
+   敌人沿走廊走到 `door_exterior_cell` 后进入 `STOPPED_AT_DOOR`，此时才扣门 HP；行进中不拆门。  
+   `scripts/invader.gd:82-100`、`135-140`；`scripts/match_state.gd:153-161`。实跑 TEST 10：到达 `(6,13)` 后 HP 才下降。
+
+4. **破门后才进房 — PASS**  
+   门未破：`get_invader_path_to_starter` 返回空路径；锁房后 `can_actor_enter_room("invader")` 为 false。门 HP≤0 才切 `ENTERING_ROOM` 并寻路到起步矿。  
+   `scripts/grid_map_manager.gd:258-264`；`scripts/match_state.gd:124-129`；`scripts/invader.gd:99-116`。实跑 TEST 10：破门前不在 interior。
+
+5. **拆光起步矿则败 — PASS**  
+   玩家房起步矿 HP≤0 → `GameResult.DEFEAT`；对局结束后敌人停手。  
+   `scripts/match_state.gd:166-175`、`184-187`、`189-191`；`scripts/invader.gd:76-80`。实跑 TEST 11 场景 1 PASS。
+
+6. **炮把敌人打到 0 则胜 — PASS**  
+   硅酸 I 仅在射程内开火；`damage_invader` 于 HP≤0 设 `VICTORY`；龟门不设胜。  
+   `scripts/silicic_turret.gd:21-48`；`scripts/match_state.gd:177-182`。实跑 TEST 11 场景 2：HP 打到 0 → `VICTORY`，敌人 `DEAD`。
+
+7. **P1 驱逐仍在 — PASS**  
+   `room_claimed` 时，非房主若在该房 interior / starter / door（含正在走入的 `target_cell`）立刻 snap 到该房 `door_exterior_cell`；房主不移；锁后非房主走不进门。  
+   `scripts/actor_base.gd:40-77`；`scripts/match_state.gd:124-129`；`scripts/grid_map_manager.gd:227-238`。实跑 TEST 7 PASS。
+
+8. **无酸树后续档 — PASS**  
+   `scripts/` 仅 `silicic_turret.gd` 一种炮；无 `carbonate` / `plant` / `build_menu` / `silicic_2` / `silicic_ii` 脚本。炮常数注明仅 I 档，无升级入口。  
+   `scripts/match_state.gd:30-34`；`scripts/silicic_turret.gd` 全文件。仓库 `*.gd`/`*.tscn` grep 无后续酸树实现。实跑 TEST 6 PASS。
+
+---
+
+### 范围（未扩、故不判 FAIL）
+
+`DESIGN.md` 中的化工厂、酸树 I–V、舱门六种、敌人技能/经验/回血、高科技，仍属后续档。V0 只要求上述八条；当前实现没有把它们做进来。
+
+未 push。未 merge。

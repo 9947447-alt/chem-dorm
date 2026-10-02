@@ -1,0 +1,132 @@
+[gd_scene load_steps=2 format=3 uid="uid://c6xk4mhud001"]
+
+[ext_resource type="Script" path="res://scripts/hud.gd" id="1_hud"]
+
+[node name="HUD" type="CanvasLayer"]
+script = ExtResource("1_hud")
+
+[node name="TopBar" type="PanelContainer" parent="."]
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 52.0
+grow_horizontal = 2
+
+[node name="Margin" type="MarginContainer" parent="TopBar"]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 8
+
+[node name="HBox" type="HBoxContainer" parent="TopBar/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 24
+
+[node name="MoneyLabel" type="Label" parent="TopBar/Margin/HBox"]
+layout_mode = 2
+text = "金钱: 0"
+
+[node name="FeedstockLabel" type="Label" parent="TopBar/Margin/HBox"]
+layout_mode = 2
+text = "化学原料: 0"
+
+[node name="DoorHpLabel" type="Label" parent="TopBar/Margin/HBox"]
+layout_mode = 2
+text = "舱门: 蜂巢闸 I (100/100)"
+
+[node name="InvaderHpLabel" type="Label" parent="TopBar/Margin/HBox"]
+layout_mode = 2
+text = "敌人: 入侵者 (Lv.1) 200/200"
+
+[node name="CountdownLabel" type="Label" parent="TopBar/Margin/HBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "倒计时: 25.0s"
+horizontal_alignment = 1
+
+[node name="RoomLabel" type="Label" parent="TopBar/Margin/HBox"]
+layout_mode = 2
+text = "当前位置: 走廊"
+horizontal_alignment = 2
+
+[node name="BottomBar" type="PanelContainer" parent="."]
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -50.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="Margin" type="MarginContainer" parent="BottomBar"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 6
+
+[node name="HBox" type="HBoxContainer" parent="BottomBar/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+alignment = 1
+
+[node name="BtnUpgradeDoor" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[1] 升级舱门"
+
+[node name="BtnBuildTurret" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[2] 硅酸炮台 I"
+
+[node name="BtnBuildIronMine" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[3] 铁矿"
+
+[node name="BtnBuildChemPlant" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[4] 化工厂"
+
+[node name="BtnBuildCatalytic" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[5] 催化柱"
+
+[node name="BtnBuildFocus" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[6] 聚焦镜"
+
+[node name="BtnBuildArm" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[7] 机械臂"
+
+[node name="BtnBuildRegulator" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[8] 稳压堆"
+
+[node name="BtnUpgradeTurret" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[9] 升级炮台"
+
+[node name="BtnToggleBranch" type="Button" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "[0] 分支: A线 (次氯)"
+
+[node name="SelectedLabel" type="Label" parent="BottomBar/Margin/HBox"]
+layout_mode = 2
+text = "当前选择: 硅酸炮台"
+
+[node name="OutcomeLabel" type="Label" parent="."]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -300.0
+offset_top = -50.0
+offset_right = 300.0
+offset_bottom = 50.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_font_sizes/font_size = 36
+horizontal_alignment = 1
+vertical_alignment = 1
+

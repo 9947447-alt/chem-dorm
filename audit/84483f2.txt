@@ -1,0 +1,99 @@
+审计对象 HEAD：84483f26bfc3639046823b08fed3ac95973fee3d
+提交：feat(turret): silicic slow and carbonate hitch on hit
+权威合同：DESIGN.md。对照：FULL 合同 + 本次新特效 B1–B6 + audit/b7b8992.txt 的 7 条。
+引擎：Godot 4.7.2.stable.official.ed1daf0bf（实测）。
+未 push。未 merge。未改源码、未改测试、未 commit。本文件仅为只读审计日志。
+
+实测：
+- godot --headless --path . --import --quit → IMPORT_EXIT:0
+- godot --headless --path . res://tests/test_runner.tscn → TEST_EXIT:0
+  ALL chem-dorm ACCEPTANCE TESTS PASSED!
+
+独立验算（含装甲，禁止裸 DPS；常数与 b7b8992 对照未改）：
+- 离子栅 V：HP=16000+4*3500=30000，armor=45*5=225，regen=40+12=52
+- Lv15 基础：raw=360，interval=0.6，eff=max(1,360-225)=135，DPS=225，净=173>0
+- Lv4：raw=56，interval=0.85，eff=max(1,56-225)=1，DPS≈1.18，净≈-50.82<0
+- 硅酸减速（生产公式，非只读表）：factor=0.70-0.05*rank → I=0.65、V=0.45，均 < 1
+  duration=1.25+0.25*rank → I=1.50、V=2.50；apply 再夹到 [0.2,0.9]
+- 碳酸硬直：duration=0.6+0.2*rank → I=0.80、V=1.60
+- 四角色 15 级均至少达到该基础净 DPS；蚀岩/暴氧更高。打穿测试走 damage_door（扣甲）+ MatchState._process（回血）。
+
+git 身份：
+- 工作区：feat/p0-grid-claim 相对 origin/main ahead 15
+- 本审计过程未执行 push / merge
+- HEAD vs 父提交仅改 actor_base / hud / invader / match_state / silicic_turret / tests
+- INVADER_LV15_*、get_effective_door_damage、HATCH_KINDS、SUBSTANCE_NAMES 不在该 diff 中
+
+================================================
+A. FULL 合同
+================================================
+
+条号 | 判定 | 证据
+---- | ---- | ----
+1.1 走廊图与 6 间宿舍（8x8, 10x8, 6x10），单格舱门，双格起步矿 | PASS | scripts/grid_map_manager.gd:69-145（6 房规格/门/门外格/双格 starter）；:156-161 走廊 Y=13..14。tests/test_p0_flow.gd:39-85 实测 6 房、spec、starter=2、门外=CORRIDOR。
+1.2 倒计时寻房、占房、原子锁房、非房主驱逐至门外 | PASS | scripts/match_state.gd:310-324 claim 后立即 lock，二次 claim 失败；:338-343 非房主不可入。scripts/actor_base.gd:40-78 非房主 eject_to_cell(door_exterior_cell)。tests/test_p0_flow.gd:87-129、1751-1972。
+1.3 倒计时结束后入侵者从 spawn 走廊寻路至门外 | PASS | scripts/match_state.gd:1040-1045 COUNTDOWN→INVADING。scripts/invader.gd:118-160 spawn 于 invader_spawn_cell=(1,13)，get_invader_path_to_cell 走廊寻路，停在 door_exterior。tests/test_p0_flow.gd:2088-2147。
+1.4 起步矿自带，定期定额产钱，被毁后停止 | PASS | scripts/match_state.gd:272-287 register 即带 starter_hp；:31-32 间隔 1.0 / 定额 10；:1053-1061 HP>0 才产钱；:1013-1022 毁后 DEFEAT 且后续 tick 停产。tests/test_p0_flow.gd:1975-2014。
+1.5 几何块、整数 HP、无血腥、Godot 4.7.2 Standard + GDScript、无 push/merge | PASS | DESIGN.md:1-3。project.godot:15 features "4.7"。全仓 .gd，无 C#。伤害均为 int。绘制为 draw_rect/draw_circle。本审计未 push/merge；git status 为 ahead 15 + 仅未跟踪 audit 文件。
+2.1 只有 money 与 feedstock | PASS | scripts/match_state.gd:196-199；HUD 仅两资源 scripts/hud.gd:137-144。无第三货币。
+2.2 矿无升级条，买入即固定产出：铁/钨/钼/硫/锑/金/铀 | PASS | scripts/match_state.gd:36-106 BUILD_CATALOG 七矿 cost/income 固定，无 mine level 字段。全仓无 upgrade_mine。产出走 :1063-1084 定额 tick。
+2.3 铀矿一房一座 | PASS | scripts/match_state.gd:97-106 max_per_room=1；:504-505 can_build 达上限拒绝。tests/test_p0_flow.gd:325-338 实测第二座失败「该建筑在房间内已达上限」。
+2.4 化工厂只产原料，矿山只产金钱 | PASS | 七矿 income_feedstock=0；chem_plant income_money=0、income_feedstock=5。升级只改 income_feedstock（:554-556,:605）。tests/test_p0_flow.gd:357-374,426-428。
+3.1 硅酸 I–V → 碳酸 I–V → 二选一锁线 | PASS | scripts/match_state.gd:706-776：silicic V→carbonate I；carbonate V 选 line_a=hypochlorous / line_b=hydrochloric；其后 hydrosulfuric→hydrofluoric 与 sulfuric→perchloric→fluoroantimonic。tests/test_p0_flow.gd:499-565,730-746。
+3.2 原地升级 | PASS | scripts/match_state.gd:829-832 改同一 SilicicTurret 的 substance/rank/branch_line，不换 cell。scripts/main.gd:91-94 点同一格升级。
+3.3 V 档冠名：胶幕、沸泉、漂白、硫沼、蚀晶、盐雾、发烟、爆氧、魔酸 | PASS | scripts/match_state.gd:623-633 CAPSTONE_NAMES；:635-642 rank>=5 显示「冠名」。tests/test_p0_flow.gd:467-483。
+3.4 无厂停在碳酸 V | PASS | scripts/match_state.gd:782-785 carbonate V 且无 chem_plant → 不能换线。tests/test_p0_flow.gd:532-544。
+3.5 换线后不能回头 | PASS | scripts/match_state.gd:787-790 branch_line 已锁定则拒绝另一支。tests/test_p0_flow.gd:567-573。
+3.6 换线后专属特效落地 | PASS | 次氯：scripts/silicic_turret.gd:169-171 apply_slow_break；氢硫酸:172-176 spawn_acid_puddle + DoT；氢氟酸:177-180 对 STOPPED_AT_DOOR 1.6x，不调 reduce_door_armor；盐酸:670-673 range 7.5 / interval 0.35；硫酸:181-183 strip_resist；高氯酸:96-107 三连后 hitch_timer=1.0；氟锑酸:122-124,_can_shoot_target 隔门 true + :184-186 1.25x。tests/test_p0_flow.gd:575-728。
+4.1 六种门各 I–V 共 30 档 | PASS | scripts/match_state.gd:838-845 HATCH_KINDS 蜂巢→虹膜→液氮→沸石→晶格→离子栅；:928-936 V→下一 I。tests/test_p0_flow.gd:1046-1056 连升 29 次到离子栅 V。
+4.2 已破不能升 | PASS | scripts/match_state.gd:919-920。tests/test_p0_flow.gd:1081-1091 reason 含「已破不能升」。
+4.3 中段回血低于 15 级拆速 | PASS | scripts/match_state.gd:889-906 ln2 regen 3–11、zeolite 14–22、lattice 25–37、ion V=52；回血 tick :1086-1098。Lv15 含甲 DPS=225 > 任一中段/终局 regen。tests/test_p0_flow.gd:1064-1078。
+4.4 15 级含装甲净 DPS > 离子栅 V 回血，可打穿归零 | PASS | scripts/match_state.gd:192-193,902-906,991-1008。scripts/invader.gd:177-201,349。独立验算净 173>0。tests/test_p0_flow.gd:1093-1112,2308-2357 四角色均走 damage_door+regen 打到 HP=0。
+5.1 打门才涨 XP，跑路/回血不涨 | PASS | scripts/invader.gd:162-165 仅 STOPPED_AT_DOOR。tests/test_p0_flow.gd:1173-1203,1340-1371。
+5.2 3-4 级压力波 | PASS | scripts/invader.gd:182-185,196-197：Lv3=42 / Lv4=56，interval 0.85（相对 Lv1 的 20/1.0 跃升）。
+5.3 四角色抽一个 | PASS | scripts/match_state.gd:265-267 ROSTER 四选一。tests/test_p0_flow.gd:1137-1145 抽样 40 次覆盖 4 种。
+5.4 技能按级解锁 | PASS | scripts/invader.gd:311-347 全部 `invader_level >= N`。tests/test_p0_flow.gd:1205-1329：蚀岩 Lv4=56 无回血加成 / Lv5=85；雾徙 Lv5 迷雾；遏火 Lv6 沉默；暴氧 Lv7 无自僵 / Lv8 才 hitch。
+5.5 偏僻回血点 | PASS | scripts/grid_map_manager.gd:23 两格 (39,13)(39,14)。scripts/invader.gd:248-284 HP<=35% 撤退，回血不涨 XP。tests/test_p0_flow.gd:1156-1171,1331-1371。
+6.1 同一建造表 | PASS | scripts/match_state.gd:35-167 BUILD_CATALOG；盟友 scripts/ally_bot.gd:152-266 与 scripts/grid_map_manager.gd:321-339 均走同一表/同一 TURRET_COST。
+6.2 盟友不碰玩家格子 | PASS | scripts/ally_bot.gd:125-144 只扫自己房间 interior；:1559-1564 测试断言建筑全在 room_102。scripts/grid_map_manager.gd:322-326 owner 校验。
+6.3 独立账本 | PASS | scripts/match_state.gd:198,379-436 actor_resources 与 player money 分离。tests/test_p0_flow.gd:1502-1516 给盟友 5000，玩家金钱不变。
+6.4 催化柱/聚焦镜/机械臂/稳压堆 | PASS | 目录 :128-166。催化/聚焦：scripts/silicic_turret.gd:81-89,251-263。机械臂/稳压：scripts/match_state.gd:1074-1083。稳压 max_per_room=1。tests/test_p0_flow.gd:1396-1488。
+7.1 HUD 双资源、门、敌人 | PASS | scripts/hud.gd:137-144 金钱/原料；:170-186 门品类/等级/血量/回血；:196-207 角色/等级/血量（可选 胶滞/沸断）。tests/test_p0_flow.gd:1626-1656。
+7.2 工具条 1-9 | PASS | scripts/hud.gd:84-106 KEY_1..KEY_9；scenes/hud.tscn:73-107 按钮文案 [1]–[9]。
+7.3 必须炮杀才胜；玩家起步矿毁则败 | PASS | VICTORY 仅 scripts/match_state.gd:1024-1029 invader_hp<=0。门满级不调 set_game_result。DEFEAT：:1019-1021 玩家 starter HP<=0。tests/test_p0_flow.gd:1712-1742,2207-2291。
+7.4 test_runner 退出码 0 | PASS | 实测 TEST_EXIT=0；tests/test_p0_flow.gd:28-37 全通过 quit(0)。
+
+================================================
+B. 本次新特效（独立验生产路径，不只看常数表）
+================================================
+
+条号 | 判定 | 证据
+---- | ---- | ----
+B1 硅酸 I–V 命中后格子移动变慢或拆门 DPS 下降；到期恢复。胶幕只加强同一减速，不换线 | PASS | 生产命中：scripts/silicic_turret.gd:164-166 `_fire_at_invader` → apply_silicic_slow。移速：scripts/invader.gd:84-89 覆盖 get_effective_move_speed；scripts/actor_base.gd:115-120 `_process` 用该速度推进 move_progress。拆门：scripts/invader.gd:296-301 break_scale *= silicic_slow_factor。到期：:204-207 timer 归零后 factor=1.0。胶幕：rank=5 仍 substance=="silicic"，params 更长更深。测试走命中后测 progress/门伤，不是只断言常数：tests/test_p0_flow.gd:779-908。实测该段 PASS。
+B2 碳酸 I–V 命中后拆门暂停扣血；进房移动打断。沸泉只加强同一硬直，不换线 | PASS | 生产命中：scripts/silicic_turret.gd:167-168 → apply_carbonate_hitch。拆门暂停：scripts/invader.gd:292-293 hitch 期间直接 return，不走 damage_door。进房冻结：:85-86 移速=0。到期后恢复。沸泉 rank=5 仍 carbonate，duration 更长。测试：命中后把 attack_timer 加满仍不扣门血；ENTERING_ROOM progress 保持 0；V>I：tests/test_p0_flow.gd:910-1002。实测 PASS。
+B3 盐酸及以后不获得硅酸减速或碳酸硬直 | PASS | scripts/silicic_turret.gd:163-186 match 仅 silicic/carbonate 两支调用这两条；hydrochloric/sulfuric/perchloric/fluoroantimonic 走各自特效。tests/test_p0_flow.gd:1004-1019 对四物质 `_fire_at_invader` 后 timer 仍为 0。
+B4 减速与打断是玩家炮增益，不能变成帮敌人 | PASS | 公式 factor=0.70-0.05*rank ∈[0.45,0.65]<1。apply 再 clampf(factor,0.2,0.9) 且叠层取 min（scripts/invader.gd:59-67），不可能加速。硬直只停敌、不停己方门。硅酸/碳酸命中路径不调用 reduce_door_armor（该函数仅定义于 scripts/match_state.gd:985-989，生产无调用点）。
+B5 测试打在生产路径上 | PASS | tests/test_p0_flow.gd:17 注册 `_test_silicic_carbonate_hit_status`；:803,867,923,963,987,1014 一律 `turret._fire_at_invader()`，再 `invader._process` 测 move_progress / door_hp，不是只读 get_silicic_slow_params。test_runner 该段日志：PASS: Silicic slow and carbonate hitch apply on hit...
+B6 未改拆门装甲公式、未改 INVADER_LV15_*、无新酸、无新门 | PASS | `git diff HEAD~1`：match_state 只加 invader_status_text + get_silicic_slow_params/get_carbonate_hitch_duration。scripts/match_state.gd:192-193 仍为 360 / 0.6；:991-992 仍 max(1, raw-armor)；:611-633 九酸未增；:838-845 六门未增。reduce_door_armor / get_hatch_stats 不在本次 diff。
+
+================================================
+C. b7b8992 的 7 条对照（禁止被破坏）
+================================================
+
+条号 | 判定 | 证据
+---- | ---- | ----
+C1 15 级四角色 vs 离子栅 V 含装甲净 DPS > 回血且门能到 0 | PASS | 同 A.4.4。scripts/match_state.gd:192-193,902-906,991-1008。scripts/invader.gd:177-201,349。tests/test_p0_flow.gd:1373-1379,2308-2357。实测四角色均打穿。净 DPS 173>0 与 b7b8992 验算一致。
+C2 Lv4 对封顶门净 DPS < 0 | PASS | scripts/invader.gd:184-185,196-197。tests/test_p0_flow.gd:1114-1123。独立验算净 ≈ -50.82 < 0。
+C3 化工厂 I–XV（原地、花钱、只加快原料、XV 封顶） | PASS | DESIGN.md:42。scripts/match_state.gd:178-184,554-608。scripts/main.gd:96-99 点格原地升。tests/test_p0_flow.gd:376-437。实测日志：化工厂 I→XV，再升失败「已达 XV 封顶」。
+C4 HUD 矿价 == BUILD_CATALOG | PASS | scripts/hud.gd:27-30,60-67,73 标价读 catalog。scenes/hud.tscn:83 铁矿 $60 == BUILD_CATALOG iron_mine.cost_money。scripts/match_state.gd:36-40。tests/test_p0_flow.gd:1665-1679 七矿循环对照。
+C5 氢氟酸不减己方门甲 | PASS | scripts/silicic_turret.gd:177-180 对拆门敌人 1.6x，不调用 reduce_door_armor。tests/test_p0_flow.gd:627-647 armor 前后相等。
+C6 cell 必须属于房间 | PASS | scripts/match_state.gd:301-305,492-498。tests/test_p0_flow.gd:439-453。实测日志：两次「建造失败: 格子不属于该房间」。
+C7 盟友会买机械臂 | PASS | scripts/ally_bot.gd:202-231。tests/test_p0_flow.gd:1566-1603。实测日志：建造成功: 在 (15, 5) 建造 机械臂。
+
+================================================
+总结
+================================================
+
+FAIL 条数：0。
+A 1.1–7.4、B1–B6、C1–C7 全部 PASS。
+无 FAIL，不改代码。
