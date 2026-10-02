@@ -76,31 +76,31 @@ text = "[1] 升级舱门"
 
 [node name="BtnBuildTurret" type="Button" parent="BottomBar/Margin/HBox"]
 layout_mode = 2
-text = "[2] 硅酸炮台 ($100)"
+text = "[2] 硅酸炮台 I"
 
 [node name="BtnBuildIronMine" type="Button" parent="BottomBar/Margin/HBox"]
 layout_mode = 2
-text = "[3] 铁矿 ($60)"
+text = "[3] 铁矿"
 
 [node name="BtnBuildChemPlant" type="Button" parent="BottomBar/Margin/HBox"]
 layout_mode = 2
-text = "[4] 化工厂 ($200)"
+text = "[4] 化工厂"
 
 [node name="BtnBuildCatalytic" type="Button" parent="BottomBar/Margin/HBox"]
 layout_mode = 2
-text = "[5] 催化柱 ($800)"
+text = "[5] 催化柱"
 
 [node name="BtnBuildFocus" type="Button" parent="BottomBar/Margin/HBox"]
 layout_mode = 2
-text = "[6] 聚焦镜 ($600)"
+text = "[6] 聚焦镜"
 
 [node name="BtnBuildArm" type="Button" parent="BottomBar/Margin/HBox"]
 layout_mode = 2
-text = "[7] 机械臂 ($1000)"
+text = "[7] 机械臂"
 
 [node name="BtnBuildRegulator" type="Button" parent="BottomBar/Margin/HBox"]
 layout_mode = 2
-text = "[8] 稳压堆 ($2000)"
+text = "[8] 稳压堆"
 
 [node name="BtnUpgradeTurret" type="Button" parent="BottomBar/Margin/HBox"]
 layout_mode = 2

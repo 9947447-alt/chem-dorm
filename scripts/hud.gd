@@ -45,13 +45,13 @@ func _ready() -> void:
 	MatchState.game_over.connect(_on_game_over)
 
 	btn_upgrade_door.pressed.connect(_on_btn_upgrade_door_pressed)
-	btn_build_turret.pressed.connect(func(): _select_build("turret", "硅酸炮台"))
+	btn_build_turret.pressed.connect(func(): _select_build("turret", str(MatchState.BUILD_CATALOG.get("silicic_turret_1", {}).get("name", "硅酸炮台 I"))))
 	btn_build_iron_mine.pressed.connect(_on_btn_cycle_mine_pressed)
-	btn_build_chem_plant.pressed.connect(func(): _select_build("chem_plant", "化工厂"))
-	btn_build_catalytic.pressed.connect(func(): _select_build("catalytic_column", "催化柱"))
-	btn_build_focus.pressed.connect(func(): _select_build("focus_lens", "聚焦镜"))
-	btn_build_arm.pressed.connect(func(): _select_build("robotic_arm", "机械臂"))
-	btn_build_regulator.pressed.connect(func(): _select_build("regulator_stack", "稳压堆"))
+	btn_build_chem_plant.pressed.connect(func(): _select_build("chem_plant", str(MatchState.BUILD_CATALOG.get("chem_plant", {}).get("name", "化工厂"))))
+	btn_build_catalytic.pressed.connect(func(): _select_build("catalytic_column", str(MatchState.BUILD_CATALOG.get("catalytic_column", {}).get("name", "催化柱"))))
+	btn_build_focus.pressed.connect(func(): _select_build("focus_lens", str(MatchState.BUILD_CATALOG.get("focus_lens", {}).get("name", "聚焦镜"))))
+	btn_build_arm.pressed.connect(func(): _select_build("robotic_arm", str(MatchState.BUILD_CATALOG.get("robotic_arm", {}).get("name", "机械臂"))))
+	btn_build_regulator.pressed.connect(func(): _select_build("regulator_stack", str(MatchState.BUILD_CATALOG.get("regulator_stack", {}).get("name", "稳压堆"))))
 	btn_upgrade_turret.pressed.connect(_on_btn_upgrade_turret_pressed)
 	btn_toggle_branch.pressed.connect(_on_btn_toggle_branch_pressed)
 
@@ -65,6 +65,34 @@ func _get_mine(idx: int) -> Dictionary:
 		"name": item.get("name", id),
 		"cost": int(item.get("cost_money", 0))
 	}
+
+func update_build_buttons() -> void:
+	var t_cost: int = int(MatchState.BUILD_CATALOG.get("silicic_turret_1", {}).get("cost_money", 100))
+	var t_name: String = str(MatchState.BUILD_CATALOG.get("silicic_turret_1", {}).get("name", "硅酸炮台 I"))
+	btn_build_turret.text = "[2] %s ($%d)" % [t_name, t_cost]
+
+	var mine: Dictionary = _get_mine(current_mine_idx)
+	btn_build_iron_mine.text = "[3] %s ($%d)" % [mine["name"], mine["cost"]]
+
+	var cp_cost: int = int(MatchState.BUILD_CATALOG.get("chem_plant", {}).get("cost_money", 200))
+	var cp_name: String = str(MatchState.BUILD_CATALOG.get("chem_plant", {}).get("name", "化工厂"))
+	btn_build_chem_plant.text = "[4] %s ($%d)" % [cp_name, cp_cost]
+
+	var cat_cost: int = int(MatchState.BUILD_CATALOG.get("catalytic_column", {}).get("cost_money", 800))
+	var cat_name: String = str(MatchState.BUILD_CATALOG.get("catalytic_column", {}).get("name", "催化柱"))
+	btn_build_catalytic.text = "[5] %s ($%d)" % [cat_name, cat_cost]
+
+	var foc_cost: int = int(MatchState.BUILD_CATALOG.get("focus_lens", {}).get("cost_money", 600))
+	var foc_name: String = str(MatchState.BUILD_CATALOG.get("focus_lens", {}).get("name", "聚焦镜"))
+	btn_build_focus.text = "[6] %s ($%d)" % [foc_name, foc_cost]
+
+	var arm_cost: int = int(MatchState.BUILD_CATALOG.get("robotic_arm", {}).get("cost_money", 1000))
+	var arm_name: String = str(MatchState.BUILD_CATALOG.get("robotic_arm", {}).get("name", "机械臂"))
+	btn_build_arm.text = "[7] %s ($%d)" % [arm_name, arm_cost]
+
+	var reg_cost: int = int(MatchState.BUILD_CATALOG.get("regulator_stack", {}).get("cost_money", 2000))
+	var reg_name: String = str(MatchState.BUILD_CATALOG.get("regulator_stack", {}).get("name", "稳压堆"))
+	btn_build_regulator.text = "[8] %s ($%d)" % [reg_name, reg_cost]
 
 func _on_btn_cycle_mine_pressed() -> void:
 	if current_selection == MINE_IDS[current_mine_idx]:
@@ -89,19 +117,19 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			KEY_1:
 				_on_btn_upgrade_door_pressed()
 			KEY_2:
-				_select_build("turret", "硅酸炮台")
+				_select_build("turret", str(MatchState.BUILD_CATALOG.get("silicic_turret_1", {}).get("name", "硅酸炮台 I")))
 			KEY_3:
 				_on_btn_cycle_mine_pressed()
 			KEY_4:
-				_select_build("chem_plant", "化工厂")
+				_select_build("chem_plant", str(MatchState.BUILD_CATALOG.get("chem_plant", {}).get("name", "化工厂")))
 			KEY_5:
-				_select_build("catalytic_column", "催化柱")
+				_select_build("catalytic_column", str(MatchState.BUILD_CATALOG.get("catalytic_column", {}).get("name", "催化柱")))
 			KEY_6:
-				_select_build("focus_lens", "聚焦镜")
+				_select_build("focus_lens", str(MatchState.BUILD_CATALOG.get("focus_lens", {}).get("name", "聚焦镜")))
 			KEY_7:
-				_select_build("robotic_arm", "机械臂")
+				_select_build("robotic_arm", str(MatchState.BUILD_CATALOG.get("robotic_arm", {}).get("name", "机械臂")))
 			KEY_8:
-				_select_build("regulator_stack", "稳压堆")
+				_select_build("regulator_stack", str(MatchState.BUILD_CATALOG.get("regulator_stack", {}).get("name", "稳压堆")))
 			KEY_9:
 				_on_btn_upgrade_turret_pressed()
 
@@ -130,6 +158,7 @@ func _update_hud_display() -> void:
 	_update_door_hp_display()
 	_update_invader_hp_display(MatchState.invader_hp, MatchState.INVADER_MAX_HP)
 	_update_outcome_display()
+	update_build_buttons()
 
 func _on_money_changed(amount: int) -> void:
 	_update_money_label(amount)
@@ -215,7 +244,7 @@ func _update_outcome_display() -> void:
 			label_outcome.text = "胜利！敌人已被炮台消灭"
 			label_outcome.modulate = Color(0.2, 1.0, 0.3)
 		MatchState.GameResult.DEFEAT:
-			label_outcome.text = "失败！起步矿被摧毁"
+			label_outcome.text = "失败！基底矿被摧毁"
 			label_outcome.modulate = Color(1.0, 0.2, 0.2)
 		_:
 			label_outcome.text = ""

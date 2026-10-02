@@ -25,6 +25,7 @@ func _ready() -> void:
 	success = success and _test_invader_attack_door_and_enter_room()
 	success = success and _test_victory_and_defeat_conditions()
 	success = success and _test_hatch_and_invader_balance()
+	success = success and _test_cross_room_build_blocking_and_price_source_and_starter_name()
 
 	if success:
 		print("========================================")
@@ -2598,4 +2599,219 @@ func _test_hatch_and_invader_balance() -> bool:
 	print("PASS: Balance verified: Lv.3-4 break LN2 Curtain I in 6-10s, Lv.4-10 leveling slowed ~2.1x, Zeolite Flap I leaped >2x and sustained 30+s, Ion Gate V net DPS strictly locked to 173, and all 30 ranks strictly monotonic.")
 	invader.queue_free()
 	grid.queue_free()
+	return true
+
+func _test_cross_room_build_blocking_and_price_source_and_starter_name() -> bool:
+	print("\n[TEST P0 TechDebt] Testing Starter Naming, Price Source of Truth, and Cross-Room Placement Interception...")
+
+	# =========================================================================
+	# 1. 0 阶起步矿命名测试（断言展示名锁定为「基底矿」）
+	# =========================================================================
+	if MatchState.STARTER_NAME != "基底矿":
+		printerr("FAILED: MatchState.STARTER_NAME must be '基底矿', got: ", MatchState.STARTER_NAME)
+		return false
+	if MatchState.get_starter_display_name() != "基底矿":
+		printerr("FAILED: MatchState.get_starter_display_name() must be '基底矿', got: ", MatchState.get_starter_display_name())
+		return false
+	if str(MatchState.BUILD_CATALOG.get("starter", {}).get("name", "")) != "基底矿":
+		printerr("FAILED: BUILD_CATALOG['starter']['name'] must be '基底矿'")
+		return false
+	if str(MatchState.BUILD_CATALOG.get("starter_mine", {}).get("name", "")) != "基底矿":
+		printerr("FAILED: BUILD_CATALOG['starter_mine']['name'] must be '基底矿'")
+		return false
+	if MatchState.get_building_name("starter") != "基底矿" or MatchState.get_building_name("starter_mine") != "基底矿":
+		printerr("FAILED: MatchState.get_building_name for starter must return '基底矿'")
+		return false
+	print("  [Check 1] 0 阶起步矿正式中文名已锁定为「基底矿」，与 1~7 阶矿石对齐。")
+
+	# =========================================================================
+	# 2. 价格同源测试：动态修改 BUILD_CATALOG 价格，UI 动态联动，无残留硬编码
+	# =========================================================================
+	MatchState.reset_match()
+	var main_scene: MainGame = load("res://scenes/main.tscn").instantiate()
+	add_child(main_scene)
+	for r in main_scene.grid_manager.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name, r.interior_rect)
+	var hud = main_scene.hud
+	if hud == null:
+		printerr("FAILED: HUD not found in main scene")
+		main_scene.queue_free()
+		return false
+
+	var orig_iron_cost: int = int(MatchState.BUILD_CATALOG["iron_mine"]["cost_money"])
+	var orig_gold_cost: int = int(MatchState.BUILD_CATALOG["gold_mine"]["cost_money"])
+	var orig_cp_cost: int = int(MatchState.BUILD_CATALOG["chem_plant"]["cost_money"])
+
+	# (a) 动态修改铁矿价格为 888，断言 HUD 按钮实时反映 $888
+	MatchState.BUILD_CATALOG["iron_mine"]["cost_money"] = 888
+	hud.update_build_buttons()
+	if not hud.btn_build_iron_mine.text.contains("$888"):
+		printerr("FAILED: Dynamic price change to 888 not reflected in HUD iron mine button: ", hud.btn_build_iron_mine.text)
+		MatchState.BUILD_CATALOG["iron_mine"]["cost_money"] = orig_iron_cost
+		main_scene.queue_free()
+		return false
+
+	# (b) 动态修改金矿价格为 6666，循环切换至金矿，断言反映 $6666
+	MatchState.BUILD_CATALOG["gold_mine"]["cost_money"] = 6666
+	hud.current_selection = "turret"
+	hud.current_mine_idx = 0
+	while hud.current_selection != "gold_mine":
+		hud._on_btn_cycle_mine_pressed()
+	if not hud.btn_build_iron_mine.text.contains("$6666"):
+		printerr("FAILED: Dynamic gold mine price change to 6666 not reflected on cycling: ", hud.btn_build_iron_mine.text)
+		MatchState.BUILD_CATALOG["iron_mine"]["cost_money"] = orig_iron_cost
+		MatchState.BUILD_CATALOG["gold_mine"]["cost_money"] = orig_gold_cost
+		main_scene.queue_free()
+		return false
+
+	# (c) 动态修改化工厂价格为 333，断言反映 $333
+	MatchState.BUILD_CATALOG["chem_plant"]["cost_money"] = 333
+	hud.update_build_buttons()
+	if not hud.btn_build_chem_plant.text.contains("$333"):
+		printerr("FAILED: Dynamic chem plant price change to 333 not reflected in HUD: ", hud.btn_build_chem_plant.text)
+		MatchState.BUILD_CATALOG["iron_mine"]["cost_money"] = orig_iron_cost
+		MatchState.BUILD_CATALOG["gold_mine"]["cost_money"] = orig_gold_cost
+		MatchState.BUILD_CATALOG["chem_plant"]["cost_money"] = orig_cp_cost
+		main_scene.queue_free()
+		return false
+
+	# 恢复原价格
+	MatchState.BUILD_CATALOG["iron_mine"]["cost_money"] = orig_iron_cost
+	MatchState.BUILD_CATALOG["gold_mine"]["cost_money"] = orig_gold_cost
+	MatchState.BUILD_CATALOG["chem_plant"]["cost_money"] = orig_cp_cost
+	hud.update_build_buttons()
+
+	# (d) 验证 DEFEAT 结果中文案正确展示「基底矿」且不包含裸「starter」
+	MatchState.claim_room("room_101", "player")
+	MatchState.damage_starter("room_101", MatchState.STARTER_MAX_HP)
+	if not hud.label_outcome.text.contains("基底矿"):
+		printerr("FAILED: HUD defeat text must contain '基底矿', got: ", hud.label_outcome.text)
+		main_scene.queue_free()
+		return false
+	if hud.label_outcome.text.contains("starter"):
+		printerr("FAILED: HUD defeat text must not contain raw 'starter', got: ", hud.label_outcome.text)
+		main_scene.queue_free()
+		return false
+
+	main_scene.queue_free()
+	print("  [Check 2] 建筑价格单一来源已验证，BUILD_CATALOG 动态修改与 HUD 绑定无残留硬编码。")
+
+	# =========================================================================
+	# 3. 跨房建造拦截测试：向走廊格、空房间格、盟友房间格建造必被拒绝，金钱不扣除
+	# =========================================================================
+	MatchState.reset_match()
+	var grid := GridMapManager.new()
+	add_child(grid)
+	grid._ready()
+
+	for r in grid.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name, r.interior_rect)
+
+	MatchState.claim_room("room_101", "player")
+	MatchState.claim_room("room_102", "ally_1")
+	# room_103 保持未被任何人占领（空房间）
+
+	var player_init_money: int = 2000
+	MatchState.set_actor_money("player", player_init_money)
+
+	var r101: RoomData = grid.get_room_by_id("room_101")
+	var r102: RoomData = grid.get_room_by_id("room_102")
+	var r103: RoomData = grid.get_room_by_id("room_103")
+
+	var corridor_target: Vector2i = grid.corridor_cells[0] # 走廊格
+	var empty_room_target: Vector2i = r103.interior_rect.position + Vector2i(2, 2) # 空房格
+	var ally_room_target: Vector2i = r102.interior_rect.position + Vector2i(2, 2) # 盟友房格
+
+	var count_before: int = MatchState.cell_to_building.size()
+
+	# (a) 拦截走廊格建造尝试
+	var c_res1: bool = MatchState.buy_and_place_building("room_101", "iron_mine", "player", corridor_target)
+	var c_res2: bool = MatchState.buy_and_place_building("", "iron_mine", "player", corridor_target)
+	if c_res1 or c_res2:
+		printerr("FAILED: buy_and_place_building must reject corridor cell!")
+		grid.queue_free()
+		return false
+	if MatchState.get_actor_money("player") != player_init_money:
+		printerr("FAILED: Money deducted on corridor build rejection! money: ", MatchState.get_actor_money("player"))
+		grid.queue_free()
+		return false
+	if MatchState.cell_to_building.has(corridor_target):
+		printerr("FAILED: Corridor cell registered a building unexpectedly!")
+		grid.queue_free()
+		return false
+
+	# (b) 拦截空房间格建造尝试
+	var e_res1: bool = MatchState.buy_and_place_building("room_101", "iron_mine", "player", empty_room_target)
+	var e_res2: bool = MatchState.buy_and_place_building("room_103", "iron_mine", "player", empty_room_target)
+	var e_res3: bool = MatchState.buy_and_place_building("", "iron_mine", "player", empty_room_target)
+	if e_res1 or e_res2 or e_res3:
+		printerr("FAILED: buy_and_place_building must reject empty unowned room cell!")
+		grid.queue_free()
+		return false
+	if MatchState.get_actor_money("player") != player_init_money:
+		printerr("FAILED: Money deducted on empty room build rejection! money: ", MatchState.get_actor_money("player"))
+		grid.queue_free()
+		return false
+	if MatchState.cell_to_building.has(empty_room_target):
+		printerr("FAILED: Empty room cell registered a building unexpectedly!")
+		grid.queue_free()
+		return false
+
+	# (c) 拦截盟友房间格建造尝试
+	var a_res1: bool = MatchState.buy_and_place_building("room_101", "iron_mine", "player", ally_room_target)
+	var a_res2: bool = MatchState.buy_and_place_building("room_102", "iron_mine", "player", ally_room_target)
+	var a_res3: bool = MatchState.buy_and_place_building("", "iron_mine", "player", ally_room_target)
+	if a_res1 or a_res2 or a_res3:
+		printerr("FAILED: buy_and_place_building must reject ally-owned room cell!")
+		grid.queue_free()
+		return false
+	if MatchState.get_actor_money("player") != player_init_money:
+		printerr("FAILED: Money deducted on ally room build rejection! money: ", MatchState.get_actor_money("player"))
+		grid.queue_free()
+		return false
+	if MatchState.cell_to_building.has(ally_room_target):
+		printerr("FAILED: Ally room cell registered a building unexpectedly!")
+		grid.queue_free()
+		return false
+
+	if MatchState.cell_to_building.size() != count_before:
+		printerr("FAILED: Buildings count changed after rejected build calls!")
+		grid.queue_free()
+		return false
+
+	# (d) 合法房间格子落子必须成功并扣款
+	var valid_target: Vector2i = r101.interior_rect.position + Vector2i(2, 2)
+	var v_res: bool = MatchState.buy_and_place_building("room_101", "iron_mine", "player", valid_target)
+	if not v_res:
+		printerr("FAILED: Valid room placement should succeed!")
+		grid.queue_free()
+		return false
+	var iron_cost: int = int(MatchState.BUILD_CATALOG["iron_mine"]["cost_money"])
+	if MatchState.get_actor_money("player") != player_init_money - iron_cost:
+		printerr("FAILED: Money mismatch after valid placement. Expected %d got %d" % [player_init_money - iron_cost, MatchState.get_actor_money("player")])
+		grid.queue_free()
+		return false
+	if not MatchState.cell_to_building.has(valid_target):
+		printerr("FAILED: Valid placement building missing from cell_to_building")
+		grid.queue_free()
+		return false
+
+	# (e) 行动者未占领任何房间时，在任何格子落子必须被拒绝
+	MatchState.reset_match()
+	for r in grid.get_all_rooms():
+		MatchState.register_room(r.room_id, r.display_name, r.interior_rect)
+	MatchState.set_actor_money("player", player_init_money)
+	var unowned_actor_res: bool = MatchState.buy_and_place_building("room_101", "iron_mine", "player", valid_target)
+	if unowned_actor_res:
+		printerr("FAILED: Actor with no claimed room must not be allowed to build!")
+		grid.queue_free()
+		return false
+	if MatchState.get_actor_money("player") != player_init_money:
+		printerr("FAILED: Money deducted for unowned actor build attempt!")
+		grid.queue_free()
+		return false
+
+	print("  [Check 3] 跨房拦截已验证，走廊格、空房格、盟友房格及未占房建造全数拦截且不扣款。")
+	grid.queue_free()
+	print("PASS: Starter naming, dynamic catalog price source of truth, and strict cross-room placement verified.")
 	return true

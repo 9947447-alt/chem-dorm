@@ -27,13 +27,34 @@ enum GameResult {
 }
 
 # --- 常数定义集中区 ---
-# 起步矿经济常数
+# 起步矿经济常数与正式命名
+const STARTER_NAME: String = "基底矿"
 const STARTER_INCOME_INTERVAL: float = 1.0
 const STARTER_INCOME_AMOUNT: int = 10
 const STARTER_MAX_HP: int = 100
 
-# 建造表（统一供玩家与盟友使用）
-const BUILD_CATALOG: Dictionary = {
+# 建造表（统一供玩家与盟友使用，建筑价格唯一权威数据源）
+var BUILD_CATALOG: Dictionary = {
+	"starter": {
+		"id": "starter",
+		"name": "基底矿",
+		"category": "mine",
+		"cost_money": 0,
+		"cost_feedstock": 0,
+		"income_money": 10,
+		"income_feedstock": 0,
+		"max_per_room": 1
+	},
+	"starter_mine": {
+		"id": "starter_mine",
+		"name": "基底矿",
+		"category": "mine",
+		"cost_money": 0,
+		"cost_feedstock": 0,
+		"income_money": 10,
+		"income_feedstock": 0,
+		"max_per_room": 1
+	},
 	"iron_mine": {
 		"id": "iron_mine",
 		"name": "铁矿",
@@ -356,6 +377,20 @@ func get_player_owned_room_id() -> String:
 			return r_id
 	return ""
 
+func get_actor_claimed_room_id(actor_id: String) -> String:
+	if actor_id == "player":
+		return get_player_owned_room_id()
+	for r_id in room_owners.keys():
+		if room_owners[r_id] == actor_id:
+			return r_id
+	return ""
+
+func get_room_id_at_cell(cell: Vector2i) -> String:
+	for r_id in room_interior.keys():
+		if is_cell_in_room(r_id, cell):
+			return r_id
+	return ""
+
 func can_actor_enter_room(room_id: String, actor_id: String) -> bool:
 	if not is_room_locked(room_id):
 		return true
@@ -456,7 +491,22 @@ func spend_actor_feedstock(actor_id: String, amount: int) -> bool:
 		return true
 	return false
 
-# --- 起步矿升级 ---
+# --- 起步矿升级与命名 ---
+func get_starter_display_name(_room_id: String = "") -> String:
+	return STARTER_NAME
+
+func get_building_cost(item_id: String) -> int:
+	if BUILD_CATALOG.has(item_id):
+		return int(BUILD_CATALOG[item_id].get("cost_money", 0))
+	return 0
+
+func get_building_name(item_id: String) -> String:
+	if item_id == "starter" or item_id == "starter_mine":
+		return STARTER_NAME
+	if BUILD_CATALOG.has(item_id):
+		return str(BUILD_CATALOG[item_id].get("name", item_id))
+	return item_id
+
 func get_starter_level(room_id: String) -> int:
 	return starter_level.get(room_id, 1)
 
@@ -511,18 +561,30 @@ func has_adjacent_high_tech(cell: Vector2i, item_id: String) -> bool:
 	return false
 
 func can_build(room_id: String, item_id: String, actor_id: String, cell: Vector2i) -> Dictionary:
-	if room_owners.get(room_id, "") != actor_id:
+	var claimed_room_id: String = get_actor_claimed_room_id(actor_id)
+	if claimed_room_id == "":
+		return {"success": false, "reason": "行动者尚未占领任何房间"}
+	
+	if room_id != "" and room_id != claimed_room_id:
 		return {"success": false, "reason": "只能在自己占领的房间建造"}
+	
+	var effective_room_id: String = claimed_room_id
+	var cell_room_id: String = get_room_id_at_cell(cell)
+	if cell_room_id == "":
+		return {"success": false, "reason": "格子不属于任何房间（如走廊格）"}
+	if cell_room_id != effective_room_id:
+		return {"success": false, "reason": "格子不属于行动者占领的房间"}
+	if not is_cell_in_room(effective_room_id, cell):
+		return {"success": false, "reason": "格子不属于该房间"}
+	
 	if not BUILD_CATALOG.has(item_id):
 		return {"success": false, "reason": "未知建筑类型"}
-	if not is_cell_in_room(room_id, cell):
-		return {"success": false, "reason": "格子不属于该房间"}
 	if cell_to_building.has(cell):
 		return {"success": false, "reason": "该格已有建筑"}
 	
 	var item: Dictionary = BUILD_CATALOG[item_id]
 	var max_limit: int = item.get("max_per_room", 999)
-	if count_building_type_in_room(room_id, item_id) >= max_limit:
+	if count_building_type_in_room(effective_room_id, item_id) >= max_limit:
 		return {"success": false, "reason": "该建筑在房间内已达上限 (如铀矿一房一座)"}
 	
 	var cost_m: int = item.get("cost_money", 0)
@@ -532,7 +594,7 @@ func can_build(room_id: String, item_id: String, actor_id: String, cell: Vector2
 	if get_actor_feedstock(actor_id) < cost_f:
 		return {"success": false, "reason": "原料不足 (需要 %d)" % cost_f}
 	
-	return {"success": true, "reason": ""}
+	return {"success": true, "reason": "", "effective_room_id": effective_room_id}
 
 func buy_and_place_building(room_id: String, item_id: String, actor_id: String, cell: Vector2i) -> bool:
 	var check: Dictionary = can_build(room_id, item_id, actor_id, cell)
@@ -540,6 +602,7 @@ func buy_and_place_building(room_id: String, item_id: String, actor_id: String, 
 		print("建造失败: ", check.get("reason", ""))
 		return false
 	
+	var target_room_id: String = check.get("effective_room_id", room_id)
 	var item: Dictionary = BUILD_CATALOG[item_id]
 	var cost_m: int = item.get("cost_money", 0)
 	var cost_f: int = item.get("cost_feedstock", 0)
@@ -556,7 +619,7 @@ func buy_and_place_building(room_id: String, item_id: String, actor_id: String, 
 		"name": item.get("name", ""),
 		"category": item.get("category", ""),
 		"cell": cell,
-		"room_id": room_id,
+		"room_id": target_room_id,
 		"income_money": item.get("income_money", 0),
 		"income_feedstock": item.get("income_feedstock", 0)
 	}
@@ -564,11 +627,11 @@ func buy_and_place_building(room_id: String, item_id: String, actor_id: String, 
 		b_data["level"] = 1
 		b_data["name"] = "化工厂 %s" % get_roman_numeral(1)
 		b_data["income_feedstock"] = get_chem_plant_income_for_level(1)
-	if not room_buildings.has(room_id):
-		room_buildings[room_id] = []
-	room_buildings[room_id].append(b_data)
+	if not room_buildings.has(target_room_id):
+		room_buildings[target_room_id] = []
+	room_buildings[target_room_id].append(b_data)
 	cell_to_building[cell] = b_data
-	building_added.emit(room_id, b_data)
+	building_added.emit(target_room_id, b_data)
 	print("建造成功: 在 %s 建造 %s" % [cell, b_data.get("name", item.get("name", ""))])
 	return true
 
